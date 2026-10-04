@@ -2,6 +2,7 @@ import re, base64
 import httpx
 from app.core.config import get_settings
 from app.core.exceptions import BatonError
+from app.utils.text_utils import language_for
 
 class GitHubService:
     def __init__(self, token:str|None=None): self.token=token or get_settings().github_token
@@ -21,13 +22,16 @@ class GitHubService:
     async def repository(self,owner,repo): return await self.request("GET",f"/repos/{owner}/{repo}")
     async def branches(self,owner,repo): return await self.request("GET",f"/repos/{owner}/{repo}/branches",params={"per_page":100})
     async def tree(self,owner,repo,branch,path=""):
-        ref=branch or "HEAD"; data=await self.request("GET",f"/repos/{owner}/{repo}/git/trees/{ref}",params={"recursive":"1"})
+        data=await self.tree_snapshot(owner,repo,branch)
         prefix=path.strip("/")
         return [x for x in data.get("tree",[]) if not prefix or x.get("path","")==prefix or x.get("path","").startswith(prefix+"/")]
+    async def tree_snapshot(self,owner,repo,branch):
+        ref=branch or "HEAD"
+        return await self.request("GET",f"/repos/{owner}/{repo}/git/trees/{ref}",params={"recursive":"1"})
     async def file(self,owner,repo,branch,path):
         data=await self.request("GET",f"/repos/{owner}/{repo}/contents/{path.lstrip('/')}",params={"ref":branch})
         if isinstance(data,list) or data.get("type")!="file": raise BatonError("Requested path is not a file")
         if data.get("size",0)>get_settings().max_file_size_bytes: raise BatonError("File exceeds configured size limit",413)
         try: content=base64.b64decode(data.get("content","")).decode("utf-8")
         except (ValueError,UnicodeDecodeError): raise BatonError("Binary files are not supported")
-        return {"path":data["path"],"size":data.get("size",len(content.encode())),"content":content}
+        return {"path":data["path"],"size":data.get("size",len(content.encode())),"content":content,"language":language_for(data["path"])}

@@ -1147,3 +1147,101 @@ If the backend is extended after V1, the safest order is:
 10. Add an explicit cache only if performance requires it and if token/repository privacy requirements are defined first.
 
 Any future additions should preserve the core rules: read-only GitHub access, no secret leakage, no repository code execution, no unnecessary infrastructure, and no unapproved architectural expansion.
+
+
+---
+
+## 21. Master Solution Blueprint audit and correction log
+
+This section records the non-destructive audit performed against `BATON_Master_Solution_Blueprint.md`.
+
+### 21.1 Existing structure preserved
+
+The current workspace is already the backend application root, so the existing `app/` architecture was preserved. The implementation continues to use:
+
+```text
+app/
+├── api/routes/
+├── core/
+├── schemas/
+├── services/
+├── analyzers/
+├── generators/
+└── utils/
+```
+
+The workspace must not be changed into `backend/backend/`. In the final monorepo, this workspace is intended to be placed at `project-root/backend/`.
+
+No working route, service, analyzer, generator, or test was deleted.
+
+### 21.2 Blueprint-aligned corrections applied
+
+The following targeted changes were made:
+
+1. **Repository freshness metadata**
+   - Analysis now retains the Git tree snapshot SHA as `metadata.commit`.
+   - Analysis now records an actual UTC generation timestamp in `metadata.generated`.
+   - Analysis reports `metadata.files_analyzed`.
+
+2. **Omitted-content reporting**
+   - Files skipped because of size, count, binary/decoding problems, or retrieval failures are recorded in `metadata.skipped_files`.
+   - Analysis warnings state when relevant files were omitted.
+   - Context generation returns an `omitted` array in addition to Markdown and the token estimate.
+
+3. **Blueprint `context.md` shape**
+   - Generated context now starts with `# Baton Context`.
+   - It includes the blueprint sections for source, requesting member, do-not-touch boundaries, stack, structure, rules, source member, completed work, frontend expectations, routes, API calls, types/data shapes, mock data, environment variables, handoff, shared files, integration issues, stray files, not-detected facts, and verification files.
+   - Unconfigured Mission Control fields are explicitly labeled rather than invented.
+   - The existing `Baton Repository Context` label is retained for compatibility with the earlier V1 output.
+
+4. **File language detection**
+   - Individual GitHub file responses now include the detected language when the extension is recognized.
+
+5. **Integration checking**
+   - The existing integration endpoint remains backward-compatible when branch pairs are not supplied.
+   - When both `frontend_branch` and `backend_branch` are supplied, the backend now performs real read-only analyses of both branches and returns route comparison output.
+   - No GitHub write operation is introduced.
+
+6. **Health compatibility**
+   - The original `/health` endpoint remains available.
+   - A non-documented compatibility alias `/api/health` was added to match the blueprint's Render health-check convention.
+   - `render.yaml` now uses `/api/health` for the Render health check.
+
+### 21.3 Blueprint items intentionally not invented
+
+The uploaded blueprint describes product capabilities and a shared-contract philosophy, but it does not provide a frozen route-by-route API table with exact methods, request bodies, response schemas, error codes, and auth rules. Therefore, no new unapproved route families were invented.
+
+The following blueprint features remain explicitly outside the current stateless V1 contract unless a later API contract defines them:
+
+- Mission Control team/member persistence.
+- Roles, duties, ownership configuration, and Team Rules storage.
+- Repository skeleton initialization and GitHub commits.
+- `contracts/api.md` and `contracts/data.md` management.
+- Full project structure validation.
+- Recent commit extraction.
+- Line-level conflict analysis.
+- Full two-branch contract/type compatibility analysis.
+- Database-backed configuration.
+
+This is intentional: the original V1 implementation rules prohibit databases, authentication systems, GitHub writes, background workers, and extra architecture. The current backend reports missing configuration as `Not configured` or `Not detected` rather than falsely claiming that the capability exists.
+
+### 21.4 Contract caution
+
+The existing route set remains:
+
+```text
+GET  /health
+GET  /api/health                 compatibility alias
+POST /api/v1/github/validate-repository
+GET  /api/v1/github/branches
+GET  /api/v1/github/tree
+GET  /api/v1/github/file
+POST /api/v1/analysis/folder
+POST /api/v1/analysis/repository
+POST /api/v1/context
+POST /api/v1/prompt
+POST /api/v1/conflicts
+POST /api/v1/integration
+```
+
+Because the Master Solution Blueprint does not specify replacement payload contracts for these routes, their existing V1 request shapes were preserved to avoid breaking the frontend or existing integrations.
