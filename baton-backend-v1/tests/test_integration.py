@@ -18,9 +18,29 @@ def test_normalize_endpoint():
     assert normalize_endpoint("app/routes.py: POST /api/items") == "POST /api/items"
     assert normalize_endpoint("/api/orders") == "/api/orders"
     assert normalize_endpoint("") == ""
+    assert normalize_endpoint("src/components/Page.tsx: GET /api/v1/report") == "GET /api/v1/report"
+    assert normalize_endpoint("src/components/Page.tsx:     /api/v1/report   ") == "/api/v1/report"
 
-def test_compare_integration_matching():
-    # Frontend has API calls extracted by api_analyzer
+
+def test_compare_prefers_frontend_api_calls_over_source_metadata():
+    frontend_analysis = {
+        "api_calls": ["src/components/UserList.tsx: /api/users", "src/components/Home.tsx: GET /api/home"],
+        "routes": ["src/routes/app.tsx: /internal/unused"],
+    }
+    backend_analysis = {
+        "routes": ["app/api/routes/users.py: /api/users", "app/api/routes/home.py: /api/home"],
+        "api_calls": [],
+    }
+
+    comp = compare(frontend_analysis, backend_analysis)
+    assert comp["frontend_routes"] == ["/api/users", "GET /api/home"]
+    assert comp["backend_routes"] == ["/api/home", "/api/users"]
+    assert comp["compatible"] is True
+    assert comp["unmatched_frontend_routes"] == []
+    assert comp["unmatched_backend_routes"] == []
+
+
+def test_compare_integration_matching():    # Frontend has API calls extracted by api_analyzer
     frontend_analysis = {
         "api_calls": [
             "src/components/UserList.tsx: /api/users",
