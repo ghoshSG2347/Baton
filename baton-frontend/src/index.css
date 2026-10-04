@@ -1,0 +1,126 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --baton-accent: #34d59a;
+  --baton-warning: #ff3621;
+  --baton-border: #303236;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #000000;
+  color: #ffffff;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0b;
+}
+::-webkit-scrollbar-thumb {
+  background: #303236;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4d52;
+}
+
+/* Hide default cursor on desktop for custom cursor */
+@media (pointer: fine) {
+  body {
+    cursor: none;
+  }
+  a, button, input, textarea, select, [role="button"] {
+    cursor: none;
+  }
+}
+
+/* Geist Mono fallback - use system mono if not loaded */
+.font-mono {
+  font-family: 'Geist Mono', 'Fira Code', 'Source Code Pro', 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+}
+
+/* Selection */
+::selection {
+  background: rgba(52, 213, 154, 0.3);
+  color: #ffffff;
+}
+
+/* Utility classes */
+.text-balance {
+  text-wrap: balance;
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(48, 50, 54, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(48, 50, 54, 0.3) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.scanline-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(52, 213, 154, 0.15), transparent);
+  pointer-events: none;
+  z-index: 9998;
+  animation: scanline 8s linear infinite;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(0vh); }
+  100% { transform: translateY(100vh); }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  body {
+    cursor: auto;
+  }
+  a, button, input, textarea, select, [role="button"] {
+    cursor: auto;
+  }
+  .scanline-overlay {
+    display: none;
+  }
+}
+
+/* Touch devices - restore cursor */
+@media (pointer: coarse) {
+  body {
+    cursor: auto;
+  }
+  a, button, input, textarea, select, [role="button"] {
+    cursor: auto;
+  }
+}
