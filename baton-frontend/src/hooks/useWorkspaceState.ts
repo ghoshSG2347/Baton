@@ -91,6 +91,24 @@ export function useWorkspaceState() {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
+  // Clears all repository-specific state and persisted localStorage while
+  // preserving the in-memory GitHub token so the user can immediately
+  // connect a new repository without re-entering their token.
+  const changeRepository = useCallback(() => {
+    setRepoUrl('');
+    setRepo(null);
+    setSelectedBranch('');
+    setSelectedFolder('');
+    setMembers([]);
+    setIsDemoMode(false);
+    setFirstRun(true);
+    setFirstRunStep(0);
+    setResetVersion((version) => version + 1);
+    setActiveSection('repository');
+    localStorage.removeItem(STORAGE_KEY);
+    // githubToken intentionally not cleared — survives repository switching
+  }, []);
+
   return {
     ...state,
     setRepoUrl,
@@ -106,6 +124,7 @@ export function useWorkspaceState() {
     setFirstRun,
     setFirstRunStep,
     reset,
+    changeRepository,
     resetVersion,
   };
 }

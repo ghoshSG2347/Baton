@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import {
   Activity, GitBranch, Users, BarChart3, FileText, Terminal,
-  Radar, GitMerge, RefreshCw, Settings, Menu, X,
+  Radar, GitMerge, RefreshCw, Settings, Menu, X, LogOut,
 } from 'lucide-react';
 import type { WorkspaceSection } from '@/types';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
@@ -168,6 +168,22 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
           )}
           <span className="text-baton-border">|</span>
           <StatusIndicator status={state.repo || state.isDemoMode ? 'connected' : 'idle'} />
+          {(state.repo || state.isDemoMode) && (
+            <>
+              <span className="text-baton-border">|</span>
+              <button
+                type="button"
+                id="header-change-repository-btn"
+                onClick={() => state.changeRepository()}
+                aria-label="Change repository"
+                className="flex items-center gap-1 font-mono text-[10px] tracking-wider text-baton-text-tertiary hover:text-baton-warning transition-colors uppercase"
+                title="Exit current repository and connect a new one"
+              >
+                <LogOut size={11} />
+                CHANGE REPO
+              </button>
+            </>
+          )}
         </div>
 
         {/* Right: actions */}
@@ -235,7 +251,8 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
             sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
           )}
         >
-          <nav className="py-4 px-3 h-full overflow-y-auto">
+          <nav className="py-4 px-3 h-full overflow-y-auto flex flex-col">
+            <div className="flex-1">
             {navSections.map((section) => (
               <div key={section.group} className="mb-6">
                 <div className="px-3 mb-2">
@@ -271,6 +288,37 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
                 })}
               </div>
             ))}
+            </div>
+
+            {/* Change Repository — shown when a repo is connected */}
+            {(state.repo || state.isDemoMode) && (
+              <div className="mt-auto pt-4 border-t border-baton-border">
+                <div className="px-3 mb-2">
+                  <MonoLabel className="text-baton-text-tertiary">CONNECTED REPOSITORY</MonoLabel>
+                </div>
+                <div className="px-3 py-1.5 mb-2">
+                  <div className="font-mono text-[11px] text-baton-text-highlight truncate">
+                    {state.repo ? state.repo.repository : 'demo-project'}
+                  </div>
+                  <div className="font-mono text-[10px] text-baton-text-tertiary truncate">
+                    {state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'baton/demo-project'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  id="sidebar-change-repository-btn"
+                  onClick={() => {
+                    setSidebarOpen(false);
+                    state.changeRepository();
+                  }}
+                  aria-label="Exit current repository and connect a new one"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-baton text-baton-text-secondary hover:text-baton-warning hover:bg-baton-layer-1/50 transition-all duration-150 text-sm"
+                >
+                  <LogOut size={13} />
+                  <span className="font-mono text-[11px] tracking-wider uppercase">← Change Repository</span>
+                </button>
+              </div>
+            )}
           </nav>
         </aside>
 

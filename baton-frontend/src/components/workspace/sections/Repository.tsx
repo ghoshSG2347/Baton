@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GitBranch, File, ChevronRight, Loader2, Github } from 'lucide-react';
+import { GitBranch, File, ChevronRight, Loader2, Github, LogOut } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { TreeItem, RepoValidation } from '@/types';
 import { batonApi } from '@/lib/api/batonApi';
@@ -193,9 +193,27 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
         </Panel>
       )}
 
-      {/* Repository metadata */}
+      {/* Repository connected — metadata + change action */}
       {state.repo && (
         <>
+          {/* Change repository action */}
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <span className="font-mono text-[11px] text-baton-text-tertiary">CONNECTED TO</span>
+              <span className="font-mono text-[11px] text-baton-text-highlight ml-2">{state.repo.owner}/{state.repo.repository}</span>
+            </div>
+            <button
+              type="button"
+              id="repository-change-repository-btn"
+              onClick={() => state.changeRepository()}
+              aria-label="Exit current repository and connect a new one"
+              className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-wider text-baton-text-tertiary hover:text-baton-warning border border-baton-border hover:border-baton-warning/50 rounded-baton px-3 py-1.5 transition-all duration-150 uppercase"
+            >
+              <LogOut size={11} />
+              ← Change Repository
+            </button>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-baton-border mb-6">
             {[
               { label: 'OWNER', value: state.repo.owner },
