@@ -5,7 +5,12 @@ from app.core.exceptions import BatonError
 from app.utils.text_utils import language_for
 
 class GitHubService:
-    def __init__(self, token:str|None=None): self.token=token or get_settings().github_token
+    def __init__(self, token: str | None = None):
+        if token and token.strip():
+            self.token = token.strip()
+        else:
+            env_token = get_settings().github_token
+            self.token = env_token.strip() if env_token and env_token.strip() else None
     async def request(self, method:str, path:str, **kwargs):
         headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}
         if self.token: headers["Authorization"]=f"Bearer {self.token}"
@@ -18,7 +23,10 @@ class GitHubService:
     def validate_repo_url(url:str)->tuple[str,str]:
         m=re.fullmatch(r"https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)/?",url.strip())
         if not m: raise BatonError("repo_url must be a public github.com owner/repository URL")
-        return m.group(1),m.group(2)
+        owner, repo = m.group(1), m.group(2)
+        if repo.endswith(".git"):
+            repo = repo[:-4]
+        return owner, repo
     async def repository(self,owner,repo): return await self.request("GET",f"/repos/{owner}/{repo}")
     async def branches(self,owner,repo): return await self.request("GET",f"/repos/{owner}/{repo}/branches",params={"per_page":100})
     async def tree(self,owner,repo,branch,path=""):
