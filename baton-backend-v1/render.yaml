@@ -7,4 +7,4 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: FRONTEND_ORIGINS
-        value: http://localhost:5173,https://baton-85j60d9d0-hackathon2348sg-9289.vercel.app
+        value: http://localhost:5173,https://baton-sigma-six.vercel.app
