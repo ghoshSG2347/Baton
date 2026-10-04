@@ -10,61 +10,113 @@ import type {
   IntegrationResult,
 } from '@/types';
 
-const BASE_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
+const RAW_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
+const BASE_URL = RAW_URL.replace(/\/+$/, '');
 const BATON_KEY = import.meta.env.VITE_BATON_ACCESS_KEY || '';
 
-function getHeaders(githubToken?: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (BATON_KEY) headers['X-Baton-Key'] = BATON_KEY;
-  if (githubToken) headers['X-GitHub-Token'] = githubToken;
-  return headers;
-}
-
-async function handleResponse<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: 'Request failed' }));
-    const error = new Error(body.detail || `HTTP ${res.status}`) as Error & {
-      status: number;
-      detail: string;
-    };
-    error.status = res.status;
-    error.detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
-    throw error;
-  }
-  return res.json() as Promise<T>;
-}
-
-export interface ApiError extends Error {
+export class BatonApiError extends Error {
   status: number;
   detail: string;
+
+  constructor(message: string, status: number = 0, detail?: string) {
+    super(message);
+    this.name = 'BatonApiError';
+    this.status = status;
+    this.detail = detail || message;
+  }
+}
+
+export type ApiError = BatonApiError;
+
+async function apiRequest<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  githubToken?: string
+): Promise<T> {
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${BASE_URL}${normalizedEndpoint}`;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string>),
+  };
+
+  if (BATON_KEY) headers['X-Baton-Key'] = BATON_KEY;
+  if (githubToken) headers['X-GitHub-Token'] = githubToken;
+
+  let res: Response;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (err) {
+    console.error(`[Baton API Network Error] ${options.method || 'GET'} ${url}:`, err);
+    throw new BatonApiError(
+      'Unable to reach Baton backend. Check the backend URL or network connection.',
+      0
+    );
+  }
+
+  if (!res.ok) {
+    let bodyDetail = '';
+    try {
+      const body = await res.json();
+      if (typeof body.detail === 'string') {
+        bodyDetail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        bodyDetail = body.detail.map((e: { msg?: string; loc?: string[] }) => e.msg || JSON.stringify(e)).join(', ');
+      } else if (body.detail) {
+        bodyDetail = JSON.stringify(body.detail);
+      }
+    } catch {
+      // response wasn't JSON
+    }
+
+    let defaultMsg = `Request failed with status ${res.status}`;
+    if (res.status === 401) {
+      defaultMsg = 'Baton authentication failed. Invalid or missing access key.';
+    } else if (res.status === 403) {
+      defaultMsg = 'GitHub access denied. Check the GitHub token and repository permissions.';
+    } else if (res.status === 404) {
+      defaultMsg = 'Repository or Baton endpoint not found.';
+    } else if (res.status === 422) {
+      defaultMsg = 'Invalid repository request. Check the repository URL.';
+    } else if (res.status >= 500) {
+      defaultMsg = 'Baton backend encountered an internal error.';
+    }
+
+    const message = bodyDetail || defaultMsg;
+    console.error(`[Baton API Error] HTTP ${res.status} ${url}:`, message);
+    throw new BatonApiError(message, res.status, bodyDetail || defaultMsg);
+  }
+
+  return res.json() as Promise<T>;
 }
 
 export const batonApi = {
   async checkHealth(): Promise<{ status: string; service: string }> {
-    const res = await fetch(`${BASE_URL}/health`);
-    return handleResponse(res);
+    return apiRequest<{ status: string; service: string }>('/api/health');
   },
 
   async validateRepository(
     repoUrl: string,
     githubToken?: string
   ): Promise<RepoValidation> {
-    const res = await fetch(`${BASE_URL}/api/v1/github/validate-repository`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify({ repo_url: repoUrl }),
-    });
-    return handleResponse(res);
+    return apiRequest<RepoValidation>(
+      '/api/v1/github/validate-repository',
+      {
+        method: 'POST',
+        body: JSON.stringify({ repo_url: repoUrl }),
+      },
+      githubToken
+    );
   },
 
   async getBranches(owner: string, repo: string, githubToken?: string): Promise<Branch[]> {
     const params = new URLSearchParams({ owner, repo });
-    const res = await fetch(`${BASE_URL}/api/v1/github/branches?${params}`, {
-      headers: getHeaders(githubToken),
-    });
-    const data = await handleResponse<{ branches: Branch[] }>(res);
+    const data = await apiRequest<{ branches: Branch[] }>(
+      `/api/v1/github/branches?${params}`,
+      { method: 'GET' },
+      githubToken
+    );
     return data.branches;
   },
 
@@ -77,10 +129,11 @@ export const batonApi = {
   ): Promise<TreeItem[]> {
     const params = new URLSearchParams({ owner, repo, branch });
     if (path) params.set('path', path);
-    const res = await fetch(`${BASE_URL}/api/v1/github/tree?${params}`, {
-      headers: getHeaders(githubToken),
-    });
-    const data = await handleResponse<{ items: TreeItem[] }>(res);
+    const data = await apiRequest<{ items: TreeItem[] }>(
+      `/api/v1/github/tree?${params}`,
+      { method: 'GET' },
+      githubToken
+    );
     return data.items;
   },
 
@@ -92,10 +145,11 @@ export const batonApi = {
     githubToken?: string
   ): Promise<FileContent> {
     const params = new URLSearchParams({ owner, repo, branch, path });
-    const res = await fetch(`${BASE_URL}/api/v1/github/file?${params}`, {
-      headers: getHeaders(githubToken),
-    });
-    return handleResponse(res);
+    return apiRequest<FileContent>(
+      `/api/v1/github/file?${params}`,
+      { method: 'GET' },
+      githubToken
+    );
   },
 
   async analyzeFolder(
@@ -105,12 +159,14 @@ export const batonApi = {
     folder: string,
     githubToken?: string
   ): Promise<AnalysisResult> {
-    const res = await fetch(`${BASE_URL}/api/v1/analysis/folder`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify({ owner, repo, branch, folder }),
-    });
-    return handleResponse(res);
+    return apiRequest<AnalysisResult>(
+      '/api/v1/analysis/folder',
+      {
+        method: 'POST',
+        body: JSON.stringify({ owner, repo, branch, folder }),
+      },
+      githubToken
+    );
   },
 
   async analyzeRepository(
@@ -119,12 +175,14 @@ export const batonApi = {
     branch: string,
     githubToken?: string
   ): Promise<AnalysisResult> {
-    const res = await fetch(`${BASE_URL}/api/v1/analysis/repository`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify({ owner, repo, branch }),
-    });
-    return handleResponse(res);
+    return apiRequest<AnalysisResult>(
+      '/api/v1/analysis/repository',
+      {
+        method: 'POST',
+        body: JSON.stringify({ owner, repo, branch }),
+      },
+      githubToken
+    );
   },
 
   async generateContext(
@@ -135,12 +193,14 @@ export const batonApi = {
     includeMarkdown: boolean,
     githubToken?: string
   ): Promise<ContextResult> {
-    const res = await fetch(`${BASE_URL}/api/v1/context`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify({ owner, repo, branch, folder, include_markdown: includeMarkdown }),
-    });
-    return handleResponse(res);
+    return apiRequest<ContextResult>(
+      '/api/v1/context',
+      {
+        method: 'POST',
+        body: JSON.stringify({ owner, repo, branch, folder, include_markdown: includeMarkdown }),
+      },
+      githubToken
+    );
   },
 
   async generatePrompt(
@@ -149,12 +209,14 @@ export const batonApi = {
     constraints: string[],
     githubToken?: string
   ): Promise<PromptResult> {
-    const res = await fetch(`${BASE_URL}/api/v1/prompt`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify({ task, context, constraints }),
-    });
-    return handleResponse(res);
+    return apiRequest<PromptResult>(
+      '/api/v1/prompt',
+      {
+        method: 'POST',
+        body: JSON.stringify({ task, context, constraints }),
+      },
+      githubToken
+    );
   },
 
   async detectConflicts(
@@ -162,12 +224,14 @@ export const batonApi = {
     files: string[] = [],
     githubToken?: string
   ): Promise<ConflictResult> {
-    const res = await fetch(`${BASE_URL}/api/v1/conflicts`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify({ files, branches }),
-    });
-    return handleResponse(res);
+    return apiRequest<ConflictResult>(
+      '/api/v1/conflicts',
+      {
+        method: 'POST',
+        body: JSON.stringify({ files, branches }),
+      },
+      githubToken
+    );
   },
 
   async checkIntegration(
@@ -181,11 +245,13 @@ export const batonApi = {
     const body: Record<string, string> = { owner, repo, branch };
     if (frontendBranch) body.frontend_branch = frontendBranch;
     if (backendBranch) body.backend_branch = backendBranch;
-    const res = await fetch(`${BASE_URL}/api/v1/integration`, {
-      method: 'POST',
-      headers: getHeaders(githubToken),
-      body: JSON.stringify(body),
-    });
-    return handleResponse(res);
+    return apiRequest<IntegrationResult>(
+      '/api/v1/integration',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+      githubToken
+    );
   },
 };
