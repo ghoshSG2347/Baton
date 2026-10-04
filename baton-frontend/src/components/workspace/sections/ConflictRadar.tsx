@@ -25,6 +25,8 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
       : ''
   );
 
+  const [liveLaneFiles, setLiveLaneFiles] = useState<Record<string, string[]>>({});
+
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleDetect = async () => {
@@ -54,6 +56,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
         }
       }
       const res = await batonApi.detectConflicts(branchFiles, [], state.githubToken || undefined);
+      setLiveLaneFiles(branchFiles);
       setResult(res);
       setConflictState('success');
     } catch (err) {
@@ -77,7 +80,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
   }
 
   const branchNames = branchesInput.split('\n').map((b) => b.trim()).filter(Boolean);
-  const laneFiles = state.isDemoMode ? DEMO_LANE_FILES : {};
+  const laneFiles = state.isDemoMode ? DEMO_LANE_FILES : liveLaneFiles;
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl">

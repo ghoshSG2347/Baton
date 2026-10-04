@@ -17,6 +17,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   const [branches, setBranches] = useState(state.isDemoMode ? DEMO_BRANCHES : [] as typeof DEMO_BRANCHES);
   const [tree, setTree] = useState<TreeItem[]>(state.isDemoMode ? DEMO_TREE : []);
   const [selectedFile, setSelectedFile] = useState<{ path: string; content: string } | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [treeLoading, setTreeLoading] = useState(false);
 
@@ -58,6 +59,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
 
   const handleBranchSelect = async (branchName: string) => {
     state.setSelectedBranch(branchName);
+    setSelectedFile(null);
     setTreeLoading(true);
     if (state.isDemoMode) {
       setTimeout(() => {
@@ -68,7 +70,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
     }
     try {
       if (state.repo) {
-        const items = await batonApi.getTree(state.repo.owner, state.repo.repository, branchName, '', tokenInput || undefined);
+        const items = await batonApi.getTree(state.repo.owner, state.repo.repository, branchName, '', tokenInput || state.githubToken || undefined);
         setTree(items);
       }
     } catch (err) {
@@ -78,9 +80,29 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
     }
   };
 
-  const handleFileClick = (path: string) => {
+  const handleFileClick = async (path: string) => {
     if (state.isDemoMode) {
       setSelectedFile({ path, content: DEMO_FILE_CONTENT });
+      return;
+    }
+    if (!state.repo || !state.selectedBranch) return;
+    setFileLoading(true);
+    try {
+      const fileData = await batonApi.getFile(
+        state.repo.owner,
+        state.repo.repository,
+        state.selectedBranch,
+        path,
+        tokenInput || state.githubToken || undefined
+      );
+      setSelectedFile({ path: fileData.path, content: fileData.content });
+    } catch (err) {
+      setSelectedFile({
+        path,
+        content: `// Error loading file: ${err instanceof Error ? err.message : 'Failed to fetch file content'}`,
+      });
+    } finally {
+      setFileLoading(false);
     }
   };
 
@@ -259,7 +281,12 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
 
               <Panel label="FILE PREVIEW">
                 <div className="p-4 min-h-[200px]">
-                  {selectedFile ? (
+                  {fileLoading ? (
+                    <div className="flex items-center gap-2 text-baton-text-tertiary py-8 justify-center">
+                      <Loader2 size={16} className="animate-spin text-baton-accent" />
+                      <span className="font-mono text-[11px]">Loading file content...</span>
+                    </div>
+                  ) : selectedFile ? (
                     <div>
                       <div className="font-mono text-[11px] text-baton-accent mb-3">{selectedFile.path}</div>
                       <pre className="font-mono text-[11px] text-baton-text-highlight leading-relaxed whitespace-pre-wrap">
@@ -267,7 +294,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
                       </pre>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-center h-full text-baton-text-tertiary">
+                    <div className="flex items-center justify-center h-full text-baton-text-tertiary py-12">
                       <span className="font-mono text-[11px]">Select a file to preview</span>
                     </div>
                   )}

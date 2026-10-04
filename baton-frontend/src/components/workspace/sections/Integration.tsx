@@ -20,7 +20,9 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleCheck = async () => {
-    if (!frontendBranch.trim() || !backendBranch.trim()) return;
+    const fb = frontendBranch.trim() || (state.isDemoMode ? 'member/maya-ui' : '');
+    const bb = backendBranch.trim() || (state.isDemoMode ? 'member/arjun-api' : '');
+    if (!fb || !bb) return;
     setIntState('loading');
     setError('');
 
@@ -100,7 +102,7 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
             className="w-full border border-baton-border bg-baton-near-black rounded-baton px-3 py-2 text-sm text-baton-white placeholder:text-baton-text-tertiary outline-none font-mono"
           />
         </div>
-        <Button variant="primary" onClick={handleCheck} disabled={intState === 'loading' || !frontendBranch.trim() || !backendBranch.trim()}>
+        <Button variant="primary" onClick={handleCheck} disabled={intState === 'loading' || (!state.isDemoMode && (!frontendBranch.trim() || !backendBranch.trim()))}>
           {intState === 'loading' ? (
             <>
               <Loader2 size={14} className="animate-spin" />

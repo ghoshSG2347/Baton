@@ -5,23 +5,23 @@ export interface Branch {
 
 export interface TreeItem {
   path: string;
-  type: 'blob' | 'tree';
+  type: 'blob' | 'tree' | string;
   size: number | null;
-  sha: string;
+  sha?: string | null;
 }
 
 export interface FileContent {
   path: string;
   size: number;
   content: string;
-  language: string;
+  language?: string | null;
 }
 
 export interface RepoValidation {
   owner: string;
   repository: string;
-  default_branch: string;
-  visibility: string;
+  default_branch?: string | null;
+  visibility?: string | null;
   accessible: boolean;
 }
 
