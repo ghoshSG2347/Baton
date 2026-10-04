@@ -1,1247 +1,913 @@
-# Baton Backend Context
+# Baton V1 Backend Integration Contract
 
-## 1. Document purpose
+## 1. Document Purpose
 
-This document is the technical handoff for the Baton V1 backend. It explains the purpose of the service, the implemented architecture, every source area, the HTTP API, request and response behavior, GitHub access, security assumptions, analyzers, generators, deployment configuration, testing, and known limitations.
+`BACKEND_CONTEXT.md` is the authoritative frontend/backend technical integration contract for **Baton V1**.
 
-The backend is designed to sit between a Mission Control frontend and GitHub:
+Its purpose is to define precisely what the Baton backend provides to frontend consumers (such as the Baton Mission Control frontend built in Bolt.new or standard React/Vite environments), how to invoke its endpoints, what data models to expect, and what operational constraints apply.
+
+### Document Hierarchy
+
+When building or consuming the Baton system, three core documents work in synergy:
+
+1. **`BATON_Master_Solution_Blueprint.md`**: Defines the overall product vision, system architecture, workflow definitions, user personas, and feature intentions for Baton.
+2. **`BACKEND_CONTEXT.md` (This Document)**: Defines the frozen, currently implemented technical capabilities, HTTP API endpoints, request/response schemas, error contracts, and runtime boundaries of the Baton V1 backend.
+3. **Frontend / UI Design Prompt**: Defines the visual layout, typography, interaction patterns, design tokens, animations, and component behavior for the user interface.
+
+> [!IMPORTANT]
+> **Precedence Rule for Frontend Builders (e.g. Bolt.new):**
+> - The Master Blueprint defines **WHAT** Baton is conceptually.
+> - This contract defines **WHAT** the backend actually supports in V1.
+> - The UI prompt defines **HOW** the frontend looks and feels.
+> - If the Master Blueprint describes a broad product concept (e.g., persistent user sessions, database history, team management, or automated Git push operations) that is not supported by the V1 backend, the frontend **must not invent or fake backend APIs**. The frontend must consume only what is documented in this contract and handle any client-only state locally.
+
+---
+
+## 2. Baton V1 Backend Role
+
+The Baton V1 backend operates as a high-speed, deterministic context preparation and coordination engine positioned between the frontend interface and GitHub's REST API:
 
 ```text
-Mission Control frontend
-        |
-        | HTTP/JSON
-        v
-Baton backend
-        |
-        | Read-only GitHub REST API calls
-        v
-GitHub repository
+┌─────────────────────────────────────────────────────────┐
+│              Baton Frontend / Mission Control           │
+└────────────────────────────┬────────────────────────────┘
+                             │ HTTP / JSON
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Baton V1 Backend                     │
+│  - FastAPI / Python (Stateless)                         │
+│  - Deterministic Analyzers & Pattern Extractors         │
+│  - Context, Prompt & Coordination Generators            │
+└────────────────────────────┬────────────────────────────┘
+                             │ Read-only HTTPS (HTTPX)
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                  GitHub REST API v3                     │
+│  - Public or authenticated repository inspection        │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Baton performs deterministic repository inspection and context preparation. It does **not** use an LLM and does not write to GitHub.
+### System Boundaries and Core Responsibilities
+
+- **Deterministic Coordination**: The backend extracts structure, frameworks, routes, API calls, types, environment variables, mock fixtures, and handoff markers from repository snapshots.
+- **Context Synthesis**: It formats structured analysis data into clean, token-budgeted Markdown context packets ready for injection into external coding agents.
+- **Prompt Formulation**: It assembles standardized task prompts adhering to Baton coordination rules.
+- **No Embedded LLM**: Baton does **not** host, run, or call an internal LLM. It generates structured context and prompts to be handed off to external LLMs (e.g., Claude, ChatGPT, Cursor, Windsurf) by the user or client.
+- **Read-Only Operation**: Baton does **not** push commits, create pull requests, alter branches, or modify repository contents.
 
 ---
 
-## 2. Implementation status
+## 3. V1 Architecture
 
-The V1 implementation is complete for the supplied specification and contains:
+The Baton V1 backend is designed for zero-state reliability, speed, and simple horizontal scaling:
 
-- A stateless FastAPI application.
-- Optional shared-key protection for all non-health endpoints.
-- Read-only GitHub REST API integration using `httpx`.
-- Request-level GitHub token support through `X-GitHub-Token`.
-- Repository URL validation restricted to `github.com`.
-- Branch, tree, and file inspection endpoints.
-- Folder and repository analysis endpoints.
-- Deterministic stack, structure, API, frontend, and handoff analysis.
-- Markdown context generation with byte and token estimates.
-- Prompt generation for downstream AI coding workflows.
-- Basic shared-file conflict detection.
-- Basic integration-contract comparison utilities.
-- CORS configuration for a separately deployed frontend.
-- Render deployment configuration.
-- Pytest coverage for health, analysis, context, prompt, conflicts, and integration behavior.
+- **Framework**: FastAPI on Python 3.11+.
+- **Stateless Execution**: Every request is standalone. The backend does not maintain sessions, persistent storage, or historical logs.
+- **GitHub Client**: Asynchronous HTTP client via `httpx.AsyncClient` communicating directly with `https://api.github.com`.
+- **Deterministic Pattern Extraction**: Regex and static AST-like matching across file contents (no arbitrary code execution).
+- **No Database**: No PostgreSQL, MySQL, SQLite, MongoDB, or ORM layers.
+- **No Message Broker / Background Workers**: No Redis, Celery, BullMQ, or long-running worker pools.
+- **No Repository Execution**: Repository code is treated as untrusted text and is never executed, imported, or evaluated.
 
-The original supplied implementation prompt ended in the middle of the file-filtering section. Where later details were not available, behavior was implemented conservatively using small, deterministic JSON contracts rather than inventing a larger architecture.
+### What Statelessness Means for the Frontend
+
+Because the backend does not persist data:
+- The backend does **not** store user accounts or profiles.
+- The backend does **not** persist project history, previous analysis runs, or saved prompts.
+- The backend does **not** retain uploaded files or GitHub tokens across requests.
+- The frontend is responsible for retaining client-side session state, user preferences, and in-flight workflows in memory or client-side storage (e.g., `localStorage`).
 
 ---
 
-## 3. Design principles
+## 4. Backend Project Structure
 
-### 3.1 Stateless operation
-
-The backend does not persist repositories, tokens, users, sessions, analysis results, or generated prompts. Each request performs its work and returns its result.
-
-Benefits:
-
-- No database is required for V1.
-- No migration system is required.
-- Temporary GitHub tokens are not stored.
-- Render instances can be replaced without losing application state.
-- The frontend remains responsible for any desired persistence.
-
-### 3.2 Read-only GitHub access
-
-Baton only reads repository metadata, branches, Git trees, and file contents. It does not expose operations that:
-
-- Push commits.
-- Create branches.
-- Merge pull requests.
-- Delete files or repositories.
-- Modify issues, pull requests, or settings.
-- Execute repository code.
-
-### 3.3 Deterministic processing
-
-The analyzers use ordinary Python text and path processing. They do not reason with an AI model. The output is intended to be supplied later to a user's preferred coding model or coding tool.
-
-### 3.4 Treat repositories as untrusted input
-
-The repository analyzer reads text returned by GitHub but never imports project modules, executes scripts, runs shell commands from the repository, or evaluates repository configuration as code.
-
-### 3.5 Small, transparent dependencies
-
-The backend uses FastAPI, Pydantic, Pydantic Settings, Uvicorn, HTTPX, and Pytest. It intentionally does not use LangChain, OpenAI SDKs, Anthropic SDKs, vector databases, Redis, Celery, or other unnecessary infrastructure.
-
----
-
-## 4. Project structure
-
-The workspace itself is the backend project root. It must not be nested inside another `backend/backend` directory.
+The actual frozen structure of the `baton-backend-v1` codebase is as follows:
 
 ```text
-backend workspace/
-|
+baton-backend-v1/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py
-│   │
+│   ├── main.py                     # FastAPI app setup, CORS, route registration, error handlers
 │   ├── api/
 │   │   ├── __init__.py
-│   │   ├── deps.py
-│   │   │
+│   │   ├── deps.py                 # Dependency injection (token resolution)
 │   │   └── routes/
 │   │       ├── __init__.py
-│   │       ├── health.py
-│   │       ├── github.py
-│   │       ├── analysis.py
-│   │       ├── context.py
-│   │       ├── prompt.py
-│   │       ├── conflicts.py
-│   │       └── integration.py
-│   │
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── config.py
-│   │   ├── security.py
-│   │   └── exceptions.py
-│   │
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── github.py
-│   │   ├── team.py
-│   │   ├── analysis.py
-│   │   ├── context.py
-│   │   ├── prompt.py
-│   │   ├── conflict.py
-│   │   └── integration.py
-│   │
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── github_service.py
-│   │   ├── analysis_service.py
-│   │   ├── context_service.py
-│   │   ├── prompt_service.py
-│   │   ├── conflict_service.py
-│   │   └── integration_service.py
-│   │
+│   │       ├── health.py           # Health check endpoints (/health, /api/health)
+│   │       ├── github.py           # GitHub validation, branches, tree, and file endpoints
+│   │       ├── analysis.py         # Folder and repository analysis endpoints
+│   │       ├── context.py          # Markdown context generation endpoint
+│   │       ├── prompt.py           # Prompt assembly endpoint
+│   │       ├── conflicts.py        # Path-overlap conflict detection endpoint
+│   │       └── integration.py      # Dual-branch endpoint integration comparison
 │   ├── analyzers/
 │   │   ├── __init__.py
-│   │   ├── repository_analyzer.py
-│   │   ├── stack_analyzer.py
-│   │   ├── structure_analyzer.py
-│   │   ├── api_analyzer.py
-│   │   ├── frontend_analyzer.py
-│   │   └── handoff_analyzer.py
-│   │
+│   │   ├── api_analyzer.py         # Express/FastAPI routes, fetch/axios calls, env vars
+│   │   ├── frontend_analyzer.py    # TypeScript types/interfaces, mock fixture detection
+│   │   ├── handoff_analyzer.py     # Handoff markers, TODO/FIXME extraction
+│   │   ├── repository_analyzer.py  # Aggregator for repository analysis
+│   │   ├── stack_analyzer.py       # Framework & language identification
+│   │   └── structure_analyzer.py   # File tree mapping & important file detection
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── config.py               # Pydantic BaseSettings & environment variables
+│   │   ├── exceptions.py           # BatonError custom exception and JSON handler
+│   │   └── security.py             # X-Baton-Key operator access verification
 │   ├── generators/
 │   │   ├── __init__.py
-│   │   ├── context_generator.py
-│   │   └── prompt_generator.py
-│   │
+│   │   ├── context_generator.py    # Structured Markdown context builder & budget trimmer
+│   │   └── prompt_generator.py     # Task prompt generator
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── analysis.py             # Pydantic request models for folder/repo analysis
+│   │   ├── conflict.py             # Pydantic request model for conflict detection
+│   │   ├── context.py              # Pydantic request model for context generation
+│   │   ├── github.py               # Pydantic models for GitHub operations
+│   │   ├── integration.py          # Pydantic request model for integration analysis
+│   │   ├── prompt.py               # Pydantic request model for prompt generation
+│   │   └── team.py                 # Pydantic team member model
 │   └── utils/
 │       ├── __init__.py
-│       ├── token_budget.py
-│       ├── file_filters.py
-│       └── text_utils.py
-│
+│       ├── file_filters.py         # Exclusion lists, ignore patterns, binary checks
+│       ├── text_utils.py           # Language inference, line extraction, string truncation
+│       └── token_budget.py         # Token estimation (~4 chars/token) and byte fitting
 ├── tests/
 │   ├── __init__.py
-│   ├── test_health.py
-│   ├── test_analysis.py
-│   ├── test_context.py
-│   ├── test_prompt.py
-│   ├── test_conflicts.py
-│   └── test_integration.py
-│
-├── requirements.txt
-├── .env.example
-├── .python-version
-├── render.yaml
-└── BACKEND_CONTEXT.md
+│   ├── test_analysis.py            # Analyzer deterministic output & filter tests
+│   ├── test_conflicts.py           # Conflict detection unit tests
+│   ├── test_context.py             # Markdown context generator & byte trimming tests
+│   ├── test_health.py              # Health check, X-Baton-Key, and token precedence tests
+│   ├── test_integration.py         # Dual-branch comparison & endpoint normalization tests
+│   └── test_prompt.py              # Prompt generation unit tests
+├── .env.example                    # Configuration template
+├── render.yaml                     # Render deployment specification
+├── requirements.txt                # Python dependencies
+└── BACKEND_CONTEXT.md              # Authoritative integration contract (this file)
 ```
-
-No database, models, repositories, controllers, middleware package, workers, queues, migrations, storage layer, or AI package is included.
 
 ---
 
-## 5. Application wiring
+## 5. Deployment and Base URL
 
-### `app/main.py`
+### Local Development
 
-`app/main.py` is the application entrypoint. It:
+- **Default Backend URL**: `http://localhost:8000`
+- **Default Frontend Port**: `http://localhost:5173` (configured as default in `FRONTEND_ORIGINS`)
 
-1. Loads settings through `get_settings()`.
-2. Creates the FastAPI application with title `Baton Backend` and version `1.0.0`.
-3. Installs CORS middleware.
-4. Registers the `BatonError` exception handler.
-5. Includes the health, GitHub, analysis, context, prompt, conflict, and integration routers.
+### Production (Render)
 
-Business logic is not placed in `main.py`.
+The backend is deployed independently as a Render Web Service running `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
 
-### Router prefixes
+### Frontend Configuration Convention
 
-The health router exposes:
+The frontend must **never hardcode** the backend URL in components. It should read the backend base URL from its environment configuration:
+
+- Example convention (Vite): `import.meta.env.VITE_BATON_API_URL`
+- Fallback: `http://localhost:8000`
+
+```typescript
+// Example frontend API client setup
+const BASE_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
+```
+
+---
+
+## 6. CORS / Frontend Access
+
+Cross-Origin Resource Sharing (CORS) is managed via FastAPI's `CORSMiddleware` in `app/main.py`:
+
+- **Configuration Key**: `FRONTEND_ORIGINS` (comma-separated list of allowed origins).
+- **Default Value**: `http://localhost:5173`.
+- **Allowed Methods**: `["*"]` (GET, POST, OPTIONS, etc.).
+- **Allowed Headers**: `["*"]` (including `Content-Type`, `X-Baton-Key`, `X-GitHub-Token`).
+- **Credentials**: `allow_credentials=False` (no cookies or ambient credentials are required).
+
+For production deployments, the frontend's hosting domain (e.g., `https://my-baton-app.onrender.com` or `https://my-app.vercel.app`) must be added to the backend's `FRONTEND_ORIGINS` environment variable on Render.
+
+---
+
+## 7. Authentication / Request Headers
+
+The backend supports two optional request headers:
 
 ```text
-GET /health
+┌────────────────────────────────────────────────────────┐
+│                   Incoming HTTP Request                │
+│                                                        │
+│  X-Baton-Key: <operator-key>                           │  ──► Checked against BATON_ACCESS_KEY
+│  X-GitHub-Token: <personal-access-token>               │  ──► Overrides GITHUB_TOKEN for GitHub API
+│  Content-Type: application/json                        │
+└────────────────────────────────────────────────────────┘
 ```
 
-All business routers are under:
+### 1. `X-Baton-Key` (Shared Operator Access Gate)
+
+`X-Baton-Key` is an optional shared operator access key for restricting backend access to authorized deployments or clients.
+
+- **Not User Auth**: It is **not** a user login system, does not generate JWTs, and does not represent individual user identities.
+- **Behavior**:
+  - If the backend environment variable `BATON_ACCESS_KEY` is **empty or unset**: All endpoints are open; no key is required.
+  - If `BATON_ACCESS_KEY` is **set**: All endpoints (except `/health` and `/api/health`) require the header `X-Baton-Key: <key>`. Requests missing or providing an invalid key receive `HTTP 401 Unauthorized` with `{"detail": "Invalid or missing X-Baton-Key"}`.
+- **Frontend Handling**: The frontend should read this value from its own environment config (e.g. `VITE_BATON_ACCESS_KEY`) if configured, and attach it to API requests.
+
+### 2. `X-GitHub-Token` (Request-Scoped GitHub Token)
+
+Used to authenticate requests to the GitHub REST API for private repositories or to avoid GitHub's unauthenticated rate limits (60 requests/hr).
+
+- **Token Precedence**:
+  ```text
+  1. Header: X-GitHub-Token (per request)
+     ↓ (if not provided)
+  2. Backend Environment: GITHUB_TOKEN (server-side fallback)
+     ↓ (if not set)
+  3. Unauthenticated GitHub API Call (subject to 60 req/hr public rate limit)
+  ```
+- **Security & Privacy**:
+  - Request tokens are ephemeral, request-scoped, and never saved to disk or logs.
+  - The frontend must **never expose or attempt to read the server-side `GITHUB_TOKEN`**.
+  - If the user provides a Personal Access Token (PAT) in the frontend UI, the frontend passes it via the `X-GitHub-Token` header.
+
+---
+
+## 8. Complete API Reference
+
+All routes return JSON. Non-health routes are prefixed with `/api/v1`.
+
+### Summary Table
+
+| Method | Path | Summary | Auth Required (`X-Baton-Key`) | GitHub Token Supported (`X-GitHub-Token`) |
+|---|---|---|---|---|
+| `GET` | `/health` | Service health status check | No | No |
+| `GET` | `/api/health` | Service health alias (used by Render) | No | No |
+| `POST` | `/api/v1/github/validate-repository` | Validates GitHub repo URL & access | If `BATON_ACCESS_KEY` set | Yes |
+| `GET` | `/api/v1/github/branches` | Lists up to 100 branches for a repo | If `BATON_ACCESS_KEY` set | Yes |
+| `GET` | `/api/v1/github/tree` | Returns recursive Git tree items | If `BATON_ACCESS_KEY` set | Yes |
+| `GET` | `/api/v1/github/file` | Reads and decodes a single text file | If `BATON_ACCESS_KEY` set | Yes |
+| `POST` | `/api/v1/analysis/folder` | Analyzes a specific directory in a branch | If `BATON_ACCESS_KEY` set | Yes |
+| `POST` | `/api/v1/analysis/repository` | Analyzes the entire repository root | If `BATON_ACCESS_KEY` set | Yes |
+| `POST` | `/api/v1/context` | Generates structured Markdown context & token estimate | If `BATON_ACCESS_KEY` set | Yes |
+| `POST` | `/api/v1/prompt` | Generates a formatted coding task prompt | If `BATON_ACCESS_KEY` set | No |
+| `POST` | `/api/v1/conflicts` | Detects shared-file overlaps across branches | If `BATON_ACCESS_KEY` set | No |
+| `POST` | `/api/v1/integration` | Compares frontend API calls with backend routes | If `BATON_ACCESS_KEY` set | Yes |
+
+---
+
+## 9. Health Endpoints
+
+Both health endpoints are always public and do not enforce `X-Baton-Key`.
+
+### `GET /health` and `GET /api/health`
+
+- **Purpose**: Verify that the backend service is running and responsive.
+- **Render Configuration**: `render.yaml` designates `/api/health` as the active `healthCheckPath`.
+- **Request**: No headers or body required.
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "status": "ok",
+    "service": "baton-backend"
+  }
+  ```
+
+---
+
+## 10. GitHub API Endpoints
+
+All GitHub endpoints perform **read-only** queries against `https://api.github.com`.
+
+### 1. `POST /api/v1/github/validate-repository`
+
+Validates that a URL is a valid `github.com` repository and checks accessibility.
+
+- **Request Body**:
+  ```json
+  {
+    "repo_url": "https://github.com/owner/repository"
+  }
+  ```
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "owner": "owner",
+    "repository": "repository",
+    "default_branch": "main",
+    "visibility": "public",
+    "accessible": true
+  }
+  ```
+- **Failure Conditions**:
+  - Invalid URL structure: `400 Bad Request` (`{"detail": "repo_url must be a public github.com owner/repository URL"}`)
+  - Repository not found or inaccessible: `404 Not Found` (`{"detail": "Not Found"}`)
+
+---
+
+### 2. `GET /api/v1/github/branches`
+
+Retrieves the list of branches for a repository (up to 100 branches).
+
+- **Query Parameters**:
+  - `owner` (string, required): Repository owner / organization.
+  - `repo` (string, required): Repository name.
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "branches": [
+      {
+        "name": "main",
+        "sha": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
+      },
+      {
+        "name": "feature/api",
+        "sha": "4a2c8901e9d8f3310009c91f422894b94f1122aa"
+      }
+    ]
+  }
+  ```
+
+---
+
+### 3. `GET /api/v1/github/tree`
+
+Retrieves the recursive Git tree, filtered optionally by a subpath.
+
+- **Query Parameters**:
+  - `owner` (string, required)
+  - `repo` (string, required)
+  - `branch` (string, required)
+  - `path` (string, optional, default `""`): Subdirectory prefix to filter items.
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "items": [
+      {
+        "path": "src/App.tsx",
+        "type": "blob",
+        "size": 1420,
+        "sha": "95a12f..."
+      },
+      {
+        "path": "src/components",
+        "type": "tree",
+        "size": null,
+        "sha": "88d31a..."
+      }
+    ]
+  }
+  ```
+
+---
+
+### 4. `GET /api/v1/github/file`
+
+Fetches and decodes the UTF-8 content of a single file from GitHub.
+
+- **Query Parameters**:
+  - `owner` (string, required)
+  - `repo` (string, required)
+  - `branch` (string, required)
+  - `path` (string, required)
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "path": "src/App.tsx",
+    "size": 1420,
+    "content": "import React from 'react';\n\nexport function App() {\n  return <div>Hello World</div>;\n}\n",
+    "language": "typescript"
+  }
+  ```
+- **Failure Conditions**:
+  - Path is a directory: `400 Bad Request` (`{"detail": "Requested path is not a file"}`)
+  - Binary file or decode failure: `400 Bad Request` (`{"detail": "Binary files are not supported"}`)
+  - File size exceeds limit (`MAX_FILE_SIZE_BYTES` = 200,000 bytes): `413 Payload Too Large` (`{"detail": "File exceeds configured size limit"}`)
+  - Not found: `404 Not Found`
+
+---
+
+## 11. Repository Analysis API
+
+The analysis pipeline performs deterministic pattern matching across eligible files in a repository or folder:
 
 ```text
-/api/v1/
+GitHub Tree Snapshot
+         ↓
+File Filtering (Exclude node_modules, .git, lockfiles, binary files)
+         ↓
+Eligible File Loading (Bounded by MAX_FILES_PER_ANALYSIS & MAX_FILE_SIZE_BYTES)
+         ↓
+Pattern Analyzers (Stack, Structure, Routes, API Calls, Types, Mock Data, Handoffs)
+         ↓
+Structured Analysis JSON
 ```
 
-The current route groups are:
+### 1. `POST /api/v1/analysis/folder`
 
-```text
-/api/v1/github
-/api/v1/analysis
-/api/v1/context
-/api/v1/prompt
-/api/v1/conflicts
-/api/v1/integration
-```
+Analyzes a specific folder within a branch.
+
+- **Request Body**:
+  ```json
+  {
+    "owner": "facebook",
+    "repo": "react",
+    "branch": "main",
+    "folder": "packages/react"
+  }
+  ```
+
+### 2. `POST /api/v1/analysis/repository`
+
+Analyzes the entire repository (equivalent to calling folder analysis with `folder: ""`).
+
+- **Request Body**:
+  ```json
+  {
+    "owner": "facebook",
+    "repo": "react",
+    "branch": "main"
+  }
+  ```
+  *(Note: `branch` is optional and defaults to `""` which resolves to `HEAD` on GitHub).*
 
 ---
 
-## 6. Configuration
+### Analysis Response Shape (Full Schema)
 
-### `app/core/config.py`
-
-Settings are defined with Pydantic Settings. Values are read from environment variables and, when available, a local `.env` file.
-
-The configured fields are:
-
-| Setting | Default | Purpose |
-|---|---:|---|
-| `BATON_ENV` | `development` | Runtime environment label. |
-| `BATON_ACCESS_KEY` | empty | Optional shared key for non-health endpoints. |
-| `GITHUB_TOKEN` | empty | Server-side GitHub token for private repository access. |
-| `FRONTEND_ORIGINS` | `http://localhost:5173` | Comma-separated allowed frontend origins. |
-| `MAX_FILE_SIZE_BYTES` | `200000` | Maximum individual file size read by the backend. |
-| `MAX_TOTAL_CONTEXT_BYTES` | `2000000` | Maximum generated context size. |
-| `MAX_FILES_PER_ANALYSIS` | `100` | Maximum number of file contents loaded during analysis. |
-
-`FRONTEND_ORIGINS` is split on commas and trimmed before being passed to FastAPI's CORS middleware.
-
-### `.env.example`
-
-`.env.example` documents the expected environment variables without including secrets. A deployment should define real values through Render environment settings rather than committing a `.env` file.
-
-Secrets must never be placed in:
-
-- `BACKEND_CONTEXT.md`.
-- Source code.
-- Test fixtures.
-- API responses.
-- Git history.
-
----
-
-## 7. Security model
-
-### 7.1 Shared backend key
-
-`app/core/security.py` contains the optional shared-key dependency:
-
-```http
-X-Baton-Key: <BATON_ACCESS_KEY>
-```
-
-Behavior:
-
-- If `BATON_ACCESS_KEY` is empty, non-health endpoints are open for local development.
-- If `BATON_ACCESS_KEY` is configured, every non-health router requires a matching `X-Baton-Key` header.
-- A missing or incorrect value returns HTTP `401`.
-- `/health` remains available without the key so Render can perform health checks.
-
-This is intentionally a simple operator key. It is not a user-account system and does not implement users, registration, login, JWTs, OAuth, or sessions.
-
-### 7.2 GitHub token precedence
-
-GitHub access uses this precedence:
-
-```text
-X-GitHub-Token request header > GITHUB_TOKEN environment variable > no token
-```
-
-The request-level token is used only while handling that request. The service does not write it to a database or file and does not return it.
-
-The server-side `GITHUB_TOKEN` is appropriate for a Render deployment that must inspect private repositories. For public repositories, GitHub can also be accessed without a token, subject to GitHub's unauthenticated rate limits.
-
-### 7.3 URL validation
-
-Repository validation accepts only URLs matching the `github.com/owner/repository` pattern over HTTP or HTTPS. GitLab, Bitbucket, arbitrary hosts, and GitHub Enterprise URLs are rejected.
-
-The validation is deliberately restrictive to prevent the backend from being used as a generic HTTP proxy.
-
-### 7.4 Untrusted repository contents
-
-Repository file contents are treated as data. The backend does not:
-
-- Import Python modules from the repository.
-- Run Node, Python, shell, or build commands.
-- Invoke package managers.
-- Execute configuration files.
-- Follow repository-provided commands.
-- Interpret Markdown instructions as system instructions.
-
----
-
-## 8. GitHub service
-
-### `app/services/github_service.py`
-
-`GitHubService` is a small asynchronous HTTP client around GitHub's REST API. It uses `httpx.AsyncClient` with a base URL of:
-
-```text
-https://api.github.com
-```
-
-Requests include:
-
-```http
-Accept: application/vnd.github+json
-X-GitHub-Api-Version: 2022-11-28
-```
-
-An authorization header is added only when a token is available:
-
-```http
-Authorization: Bearer <token>
-```
-
-The service translates HTTPX failures and GitHub error responses into `BatonError` responses for the API layer.
-
-### GitHub operations
-
-| Service method | GitHub operation | Purpose |
-|---|---|---|
-| `validate_repo_url` | Local validation | Extract owner and repository from a GitHub URL. |
-| `repository` | `GET /repos/{owner}/{repo}` | Read repository metadata. |
-| `branches` | `GET /repos/{owner}/{repo}/branches` | Read branch names and commit SHAs. |
-| `tree` | `GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1` | Read repository structure. |
-| `file` | `GET /repos/{owner}/{repo}/contents/{path}?ref={branch}` | Read one text file. |
-
-The service does not call GitHub mutation endpoints.
-
-### File limits
-
-The file endpoint checks the configured `MAX_FILE_SIZE_BYTES` value before returning content. Analysis applies both the individual file limit and `MAX_FILES_PER_ANALYSIS`.
-
-Binary-looking extensions are rejected by the file filtering rules, and content decoding is UTF-8 based. Files that cannot be decoded as UTF-8 are treated as unsupported binary content.
-
----
-
-## 9. HTTP API reference
-
-All examples assume a local server at:
-
-```text
-http://localhost:8000
-```
-
-Start command:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-If `BATON_ACCESS_KEY` is configured, add this header to all business requests:
-
-```http
-X-Baton-Key: <key>
-```
-
-### 9.1 Health
-
-#### `GET /health`
-
-Purpose: Render health checks and local availability checks.
-
-Response:
-
-```json
-{
-  "status": "ok",
-  "service": "baton-backend"
-}
-```
-
-This endpoint does not call GitHub and does not require a Baton access key.
-
----
-
-### 9.2 Validate a repository
-
-#### `POST /api/v1/github/validate-repository`
-
-Request:
-
-```json
-{
-  "repo_url": "https://github.com/owner/repository"
-}
-```
-
-The backend first validates the host and path shape, then requests repository metadata from GitHub.
-
-Successful response:
-
-```json
-{
-  "owner": "owner",
-  "repository": "repository",
-  "default_branch": "main",
-  "visibility": "public",
-  "accessible": true
-}
-```
-
-Notes:
-
-- `default_branch` and `visibility` come from GitHub metadata.
-- `accessible` is true only after the GitHub metadata request succeeds.
-- Invalid repository URL shapes are rejected before any GitHub call.
-- A private repository requires a token with sufficient read access.
-
----
-
-### 9.3 List branches
-
-#### `GET /api/v1/github/branches`
-
-Query parameters:
-
-| Parameter | Required | Description |
-|---|---|---|
-| `owner` | yes | GitHub repository owner or organization. |
-| `repo` | yes | Repository name. |
-
-Example:
-
-```text
-GET /api/v1/github/branches?owner=owner&repo=repository
-```
-
-Response:
-
-```json
-{
-  "branches": [
-    {
-      "name": "main",
-      "sha": "0123456789abcdef..."
-    }
-  ]
-}
-```
-
-The service requests up to 100 branches in a single GitHub request.
-
----
-
-### 9.4 Read the repository tree
-
-#### `GET /api/v1/github/tree`
-
-Query parameters:
-
-| Parameter | Required | Description |
-|---|---|---|
-| `owner` | yes | GitHub repository owner or organization. |
-| `repo` | yes | Repository name. |
-| `branch` | yes | Branch or ref to inspect. |
-| `path` | no | Optional folder prefix. |
-
-Example:
-
-```text
-GET /api/v1/github/tree?owner=owner&repo=repository&branch=main&path=src
-```
-
-Response:
-
-```json
-{
-  "items": [
-    {
-      "path": "src/main.py",
-      "mode": "100644",
-      "type": "blob",
-      "sha": "...",
-      "size": 1200,
-      "url": "..."
-    }
-  ]
-}
-```
-
-The tree endpoint returns structure metadata and does not download file contents. A `path` filter is applied after the recursive tree response is received.
-
----
-
-### 9.5 Read a single file
-
-#### `GET /api/v1/github/file`
-
-Query parameters:
-
-| Parameter | Required | Description |
-|---|---|---|
-| `owner` | yes | GitHub repository owner or organization. |
-| `repo` | yes | Repository name. |
-| `branch` | yes | Branch or ref. |
-| `path` | yes | Repository-relative file path. |
-
-Example:
-
-```text
-GET /api/v1/github/file?owner=owner&repo=repository&branch=main&path=package.json
-```
-
-Response:
-
-```json
-{
-  "path": "package.json",
-  "size": 512,
-  "content": "{\"name\": \"example\"}",
-  "language": "json"
-}
-```
-
-The implementation reads the GitHub Contents API response, decodes Base64 content, rejects directories and unsupported binary content, and enforces the configured file-size limit.
-
----
-
-### 9.6 Analyze a folder
-
-#### `POST /api/v1/analysis/folder`
-
-Request:
-
-```json
-{
-  "owner": "example",
-  "repo": "project",
-  "branch": "member1-frontend",
-  "folder": "frontend"
-}
-```
-
-The service:
-
-1. Reads the recursive Git tree for the branch.
-2. Restricts the tree to the requested folder prefix.
-3. Removes ignored and binary-looking paths.
-4. Loads eligible text files up to the configured limits.
-5. Runs the deterministic analyzers.
-6. Returns structured JSON.
-
-The response includes fields such as:
+Both analysis endpoints return the exact same structured analysis JSON object:
 
 ```json
 {
   "metadata": {
-    "owner": "example",
-    "repo": "project",
-    "branch": "member1-frontend",
-    "folder": "frontend"
+    "owner": "my-org",
+    "repo": "my-project",
+    "branch": "main",
+    "folder": "",
+    "commit": "6809b645b20cb37d0c37107775988d8b1392e21b",
+    "generated": "2026-10-04T12:00:00.000000+00:00",
+    "files_analyzed": 14,
+    "skipped_files": [
+      "src/assets/large_graphic.png",
+      "data/large_dataset.json"
+    ]
   },
   "stack": {
     "detected": ["React", "TypeScript", "Node.js"],
-    "languages": ["json", "typescript"]
+    "languages": ["json", "markdown", "typescript"]
   },
-  "file_tree": [],
-  "important_files": [],
-  "routes": [],
-  "api_calls": [],
-  "environment_variables": [],
-  "types": [],
-  "mock_data": [],
-  "handoffs": [],
+  "file_tree": [
+    {
+      "path": "package.json",
+      "type": "blob",
+      "size": 520
+    },
+    {
+      "path": "src/App.tsx",
+      "type": "blob",
+      "size": 1200
+    }
+  ],
+  "important_files": [
+    "package.json",
+    "README.md",
+    "src/App.tsx"
+  ],
+  "routes": [
+    "app/api/routes/users.py: /api/users"
+  ],
+  "api_calls": [
+    "src/services/api.ts: /api/users"
+  ],
+  "environment_variables": [
+    "DATABASE_URL",
+    "PORT"
+  ],
+  "types": [
+    "User",
+    "UserProfile",
+    "ApiResponse"
+  ],
+  "mock_data": [
+    "src/mocks/userFixture.json"
+  ],
+  "handoffs": [
+    {
+      "path": "src/App.tsx",
+      "items": [
+        "// TODO: Integrate authentication flow",
+        "// FIXME: Handle token expiration"
+      ]
+    }
+  ],
   "shared_files": [],
   "stray_files": [],
-  "analysis_warnings": []
-}
-```
-
-The exact arrays depend on the repository contents and the active file limits.
-
----
-
-### 9.7 Analyze a repository
-
-#### `POST /api/v1/analysis/repository`
-
-Request:
-
-```json
-{
-  "owner": "example",
-  "repo": "project",
-  "branch": "main"
-}
-```
-
-This follows the same analysis pipeline as folder analysis, but analyzes the complete filtered repository tree rather than a folder prefix.
-
-The analyzer is intentionally bounded. It does not attempt to load every file in a large repository if the configured file or count limits are reached.
-
----
-
-### 9.8 Generate repository context
-
-#### `POST /api/v1/context`
-
-Request:
-
-```json
-{
-  "owner": "example",
-  "repo": "project",
-  "branch": "main",
-  "folder": "frontend",
-  "include_markdown": true
-}
-```
-
-The endpoint runs analysis and then converts the result into Markdown context. The response contains the structured analysis plus generated context:
-
-```json
-{
-  "analysis": {},
-  "markdown": "# Baton Repository Context\n...",
-  "estimated_tokens": 1200
-}
-```
-
-`estimated_tokens` is a rough estimate based on text length, using approximately four characters per token. It is a planning estimate, not a tokenizer-specific count.
-
-The generated Markdown includes sections for:
-
-- Stack.
-- File tree.
-- Routes.
-- API calls.
-- Environment variables.
-- Handoffs.
-- Important files.
-
-The resulting context is clipped to `MAX_TOTAL_CONTEXT_BYTES`.
-
----
-
-### 9.9 Generate an AI coding prompt
-
-#### `POST /api/v1/prompt`
-
-Request:
-
-```json
-{
-  "task": "Add validation to the signup form",
-  "context": "# Baton Repository Context\n...",
-  "constraints": [
-    "Do not modify the API contract",
-    "Keep the existing styling system"
+  "analysis_warnings": [
+    "2 relevant files were omitted by analysis limits or could not be read."
   ]
 }
 ```
 
-Response:
+### Analysis Field Explanations
 
-```json
-{
-  "prompt": "You are working on the Baton repository.\n\nTask:\nAdd validation to the signup form\n..."
-}
-```
-
-The prompt generator is deliberately a template generator. It does not call an AI provider. The generated prompt can be copied into ChatGPT, Claude, Gemini, Cursor, Antigravity, or another coding workflow.
+| Field | Description | Extraction Method |
+|---|---|---|
+| `metadata.owner` | Repository owner. | Request payload. |
+| `metadata.repo` | Repository name. | Request payload. |
+| `metadata.branch` | Branch analyzed. | Request payload. |
+| `metadata.folder` | Scope folder analyzed (`""` for full repo). | Request payload. |
+| `metadata.commit` | Git commit SHA of the tree snapshot. | GitHub Git Tree response SHA. |
+| `metadata.generated` | ISO-8601 UTC timestamp of analysis. | Timestamp at execution. |
+| `metadata.files_analyzed` | Number of files read and inspected. | Read counter. |
+| `metadata.skipped_files` | List of file paths omitted due to size limit, count limit, or read errors. | Filter / exception tracker. |
+| `stack.detected` | Recognized frameworks/platforms (`React`, `TypeScript`, `Python`, `Node.js`, `Python dependencies`). | Extension & key file heuristics. |
+| `stack.languages` | Sorted list of detected programming/data languages. | File extensions. |
+| `file_tree` | Filtered list of relevant tree items (`path`, `type`, `size`). | Git tree after `is_relevant` filtering. |
+| `important_files` | Key architectural files (`package.json`, `requirements.txt`, `pyproject.toml`, `README.md`, `main.py`, `App.tsx`, `App.jsx`). | Path filename matching. |
+| `routes` | Server routes detected in Python/Node files (`"<path>: <route>"`). | Regex `(app\|router).(get\|post\|put\|patch\|delete)`. |
+| `api_calls` | Client HTTP endpoints called (`"<path>: <endpoint>"`). | Regex `fetch(...)` or `axios.<method>(...)`. |
+| `environment_variables` | Environment variables referenced in code. | Regex `process.env.VAR` or `os.environ['VAR']`. |
+| `types` | TypeScript interfaces and type aliases detected. | Regex `interface Name` or `type Name`. |
+| `mock_data` | Mock data files and test fixtures. | Paths or contents matching `mock`, `fixture`, `fake`, `dummyData`. |
+| `handoffs` | Code markers requiring attention (`path` and matched `items`). | Lines containing `handoff`, `TODO`, `FIXME`. |
+| `shared_files` | Shared file collisions (initialized as `[]`). | Analyzer container. |
+| `stray_files` | Uncategorized or out-of-structure files (initialized as `[]`). | Analyzer container. |
+| `analysis_warnings` | Informational warnings (e.g. omitted files or empty folder). | Omission / empty check. |
 
 ---
 
-### 9.10 Detect shared-file conflicts
+## 12. File Filtering and Analysis Limits
 
-#### `POST /api/v1/conflicts`
+To protect memory and stay within GitHub API budgets, Baton applies deterministic filtering and strict limits.
 
-Request:
+### Active Limits (from Configuration)
 
-```json
-{
-  "files": ["src/App.tsx"],
-  "branches": {
-    "member-a": ["src/App.tsx", "src/api.ts"],
-    "member-b": ["src/App.tsx"]
+- `MAX_FILE_SIZE_BYTES`: **200,000 bytes** (~200 KB). Files exceeding this size are skipped.
+- `MAX_FILES_PER_ANALYSIS`: **100 files**. The backend reads at most 100 eligible files per analysis request.
+- `MAX_TOTAL_CONTEXT_BYTES`: **2,000,000 bytes** (~2 MB). The maximum byte length of generated Markdown context before truncation.
+
+### Excluded Directories, Files, and Extensions
+
+1. **Ignored Directories**:
+   `node_modules`, `.git`, `dist`, `build`, `coverage`, `__pycache__`, `.venv`, `venv`, `assets`
+2. **Ignored Filenames**:
+   `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
+3. **Binary Extensions**:
+   `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.ico`, `.pdf`, `.zip`, `.woff`, `.woff2`, `.ttf`, `.mp3`, `.mp4`, `.mov`, `.exe`, `.bin`
+
+### Frontend Guidance for Skipped Files
+
+The frontend should check `analysis.metadata.skipped_files` and `analysis.analysis_warnings`. If files are omitted, the frontend UI should present an indicator informing the user that the analysis represents a bounded subset of the repository.
+
+---
+
+## 13. Context Generation
+
+### `POST /api/v1/context`
+
+Runs repository/folder analysis and formats the structured results into an optimized, standardized Markdown context document ready for ingestion by coding agents.
+
+- **Request Body**:
+  ```json
+  {
+    "owner": "my-org",
+    "repo": "my-repo",
+    "branch": "main",
+    "folder": "",
+    "include_markdown": true
   }
-}
-```
+  ```
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "analysis": {
+      /* Full structured analysis JSON object */
+    },
+    "markdown": "# Baton Context\n> Baton Repository Context\n\n## Source\n- Repository: my-org/my-repo\n- Branch: main\n- Commit: 6809b645...\n- Generated: 2026-10-04T12:00:00+00:00\n\n## Requesting Member\n- Name: Not configured\n- Role: Not configured\n- Owns: Not configured\n\n## Do Not Touch\n- No ownership boundaries configured\n\n## Project Stack\n- React\n- TypeScript\n\n## Project Structure\n- package.json\n- src/App.tsx\n\n## Team Rules\n- No team rules supplied\n\n## Source Member\n- Not configured\n\n## Completed Work\n- Deterministic repository scan completed\n\n## Detected Frontend Expectations\n- User\n- ApiResponse\n\n## Routes\n- app/api/routes/users.py: /api/users\n\n## API Calls\n- src/services/api.ts: /api/users\n\n## Types / Data Shapes\n- User\n- ApiResponse\n\n## Mock Data\n- src/mocks/userFixture.json\n\n## Environment Variables\n- DATABASE_URL\n\n## Handoff\n- src/App.tsx\n\n## Shared Files\n- None detected\n\n## Possible Integration Issues\n- None detected\n\n## Stray / Out-of-structure Files\n- None detected\n\n## Not Detected\n- Ownership configuration, contracts, and recent commit subjects were not supplied to this request.\n\n## Files Included for Verification\n- package.json\n- src/App.tsx",
+    "estimated_tokens": 420,
+    "omitted": []
+  }
+  ```
 
-Response:
+### Key Context Properties
 
-```json
-{
-  "conflicts": [
-    {
-      "path": "src/App.tsx",
-      "branches": ["member-a", "member-b"],
-      "reason": "shared file changed by multiple branches"
+- **`markdown`**: Complete structured Markdown formatted with standard Baton sections.
+- **`estimated_tokens`**: Deterministic estimation calculated as `len(text) // 4`. (Note: This is an approximation for context budgeting, not an exact BPE tokenizer count).
+- **`omitted`**: Array of strings noting any omitted files or notifications if context was truncated to fit `MAX_TOTAL_CONTEXT_BYTES`.
+
+---
+
+## 14. Prompt Generation
+
+### `POST /api/v1/prompt`
+
+Assembles an external coding agent prompt combining a user's task, context, and operational constraints.
+
+- **Request Body**:
+  ```json
+  {
+    "task": "Implement user authentication endpoint in FastAPI",
+    "context": "Backend uses FastAPI with Pydantic v2.",
+    "constraints": [
+      "Do not modify files outside app/api/routes/auth.py",
+      "Do not add external dependencies without approval"
+    ]
+  }
+  ```
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "prompt": "You are working on the Baton repository.\n\nTask:\nImplement user authentication endpoint in FastAPI\n\nConstraints:\n- Do not modify files outside app/api/routes/auth.py\n- Do not add external dependencies without approval\n\nRepository context:\nBackend uses FastAPI with Pydantic v2."
+  }
+  ```
+- **Frontend Usage**: The resulting prompt string is displayed in the UI for one-click copying to the clipboard or passing to an external AI workflow. The backend does not execute the prompt.
+
+---
+
+## 15. Conflict Detection
+
+### `POST /api/v1/conflicts`
+
+Calculates path overlaps across branches or team file assignments.
+
+- **Request Body**:
+  ```json
+  {
+    "files": [],
+    "branches": {
+      "feature/frontend-auth": [
+        "src/App.tsx",
+        "src/services/api.ts",
+        "package.json"
+      ],
+      "feature/backend-auth": [
+        "app/api/routes/auth.py",
+        "package.json"
+      ]
     }
-  ],
-  "conflict_count": 1
-}
-```
-
-The current implementation detects path overlap between branch file lists. It does not calculate Git diffs or perform three-way merge analysis.
-
----
-
-### 9.11 Integration endpoint
-
-#### `POST /api/v1/integration`
-
-Request:
-
-```json
-{
-  "owner": "example",
-  "repo": "project",
-  "branch": "main",
-  "frontend_branch": "member1-frontend",
-  "backend_branch": "member2-backend"
-}
-```
-
-Response:
-
-```json
-{
-  "owner": "example",
-  "repo": "project",
-  "branch": "main",
-  "status": "ready",
-  "message": "Analyze frontend and backend branches separately to compare integration contracts."
-}
-```
-
-This is a conservative V1 coordination endpoint. It acknowledges the requested integration comparison context but does not itself fetch and compare two full branch analyses. The reusable comparison function exists in `app/services/integration_service.py` and compares route sets when provided with two analysis dictionaries.
+  }
+  ```
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "conflicts": [
+      {
+        "path": "package.json",
+        "branches": [
+          "feature/frontend-auth",
+          "feature/backend-auth"
+        ],
+        "reason": "shared file changed by multiple branches"
+      }
+    ],
+    "conflict_count": 1
+  }
+  ```
+- **Meaning of "Conflict"**: In Baton V1, conflict detection represents **shared-file coordination overlap**. It identifies where multiple branches or tasks touch identical file paths. It is **not** a Git 3-way merge engine and does not inspect line-level diffs.
 
 ---
 
-## 10. Schemas
+## 16. Integration Analysis
 
-The Pydantic schema files define the basic request and response data shapes.
+### `POST /api/v1/integration`
 
-### `app/schemas/github.py`
+Performs endpoint-level contract comparison between two branches (e.g. a frontend branch making API calls and a backend branch exposing server routes).
 
-Contains models for:
+### 1. Dual-Branch Comparison (Both Branches Provided)
 
-- Repository validation input.
-- Repository metadata output.
-- Branch objects and branch responses.
-- Tree items and tree responses.
-- File responses.
+When both `frontend_branch` and `backend_branch` are provided in the payload:
+1. The backend analyzes `frontend_branch` using `AnalysisService` and extracts frontend API calls (`api_calls` or `routes`).
+2. The backend analyzes `backend_branch` using `AnalysisService` and extracts backend routes (`routes` or `api_calls`).
+3. Source-file prefixes (such as `src/api.ts: ` or `app/routes.py: `) are stripped and endpoints are normalized.
+4. It compares the sets of endpoints and identifies matched vs. unmatched routes.
 
-### `app/schemas/analysis.py`
+- **Request Body**:
+  ```json
+  {
+    "owner": "my-org",
+    "repo": "my-project",
+    "branch": "main",
+    "frontend_branch": "feature/frontend-ui",
+    "backend_branch": "feature/backend-api"
+  }
+  ```
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "owner": "my-org",
+    "repo": "my-project",
+    "branch": "main",
+    "status": "analyzed",
+    "comparison": {
+      "frontend_routes": [
+        "GET /api/v1/users",
+        "POST /api/v1/login"
+      ],
+      "backend_routes": [
+        "GET /api/v1/users",
+        "POST /api/v1/login",
+        "GET /health"
+      ],
+      "unmatched_frontend_routes": [],
+      "unmatched_backend_routes": [
+        "GET /health"
+      ],
+      "compatible": true
+    }
+  }
+  ```
 
-Contains:
+### 2. Single-Branch / Readiness State (Branches Omitted)
 
-- `AnalysisRequest` with `owner`, `repo`, `branch`, and optional `folder`.
-- `RepositoryAnalysisRequest` with `owner`, `repo`, and `branch`.
+If either `frontend_branch` or `backend_branch` is missing:
 
-### `app/schemas/context.py`
+- **Response Shape** (`200 OK`):
+  ```json
+  {
+    "owner": "my-org",
+    "repo": "my-project",
+    "branch": "main",
+    "status": "ready",
+    "message": "Provide frontend_branch and backend_branch to run a real integration comparison."
+  }
+  ```
 
-Extends the analysis request with `include_markdown`. The current context service always returns the generated Markdown; this flag is retained as part of the planned API shape.
+### Scope of V1 Integration Comparison
 
-### `app/schemas/prompt.py`
-
-Contains a task, optional context, and a list of constraints.
-
-### `app/schemas/conflict.py`
-
-Contains an optional file list and a branch-to-file-list mapping.
-
-### `app/schemas/integration.py`
-
-Contains repository and branch identifiers for integration work.
-
-### `app/schemas/team.py`
-
-Contains a small `TeamMember` model with a member name and optional branch. It is available for future Mission Control team payloads but is not currently exposed by a route.
-
----
-
-## 11. Analysis pipeline
-
-### 11.1 `app/services/analysis_service.py`
-
-`AnalysisService.analyze` coordinates repository retrieval and analysis:
-
-1. Calls `GitHubService.tree`.
-2. Filters items using `is_relevant`.
-3. Keeps tree metadata for the `file_tree` result.
-4. Loads eligible blobs one at a time.
-5. Enforces `MAX_FILES_PER_ANALYSIS`.
-6. Enforces `MAX_FILE_SIZE_BYTES`.
-7. Ignores individual file retrieval failures so one problematic file does not abort the complete analysis.
-8. Passes the collected metadata and text contents to `RepositoryAnalyzer`.
-
-### 11.2 `app/analyzers/repository_analyzer.py`
-
-This is the coordinator. It combines outputs from:
-
-- Stack analysis.
-- Structure analysis.
-- API analysis.
-- Frontend analysis.
-- Handoff analysis.
-
-It also adds placeholders for shared files, stray files, and analysis warnings so the response has a stable high-level shape for Mission Control.
-
-### 11.3 `stack_analyzer.py`
-
-Detects common indicators from paths:
-
-- `.tsx` and `.jsx` imply React.
-- `.ts` implies TypeScript.
-- `.py` implies Python.
-- `requirements.txt` implies Python dependencies.
-- `package.json` implies Node.js.
-
-It also reports recognized file languages such as Python, JavaScript, TypeScript, JSON, Markdown, CSS, HTML, YAML, and TOML.
-
-### 11.4 `structure_analyzer.py`
-
-Returns the filtered file tree and identifies common important files:
-
-- `package.json`.
-- `requirements.txt`.
-- `pyproject.toml`.
-- `README.md`.
-- `main.py`.
-- `App.tsx`.
-- `App.jsx`.
-
-### 11.5 `api_analyzer.py`
-
-Uses regular expressions to detect simple patterns:
-
-- Express/FastAPI-style `app.get`, `app.post`, `router.get`, and related route declarations.
-- `fetch(...)` calls.
-- Common `axios.get`, `axios.post`, and related calls.
-- JavaScript `process.env.NAME` references.
-- Python `os.environ(...)` and `os.environ_get(...)` references.
-
-This is pattern detection, not a full parser. It may miss dynamically constructed routes and unusual formatting.
-
-### 11.6 `frontend_analyzer.py`
-
-Detects:
-
-- TypeScript-style `interface Name` declarations.
-- `type Name` declarations.
-- Likely mock-data files based on names such as `mock`, `fixture`, or `fake`.
-- Text patterns such as `mockData` and `dummyData`.
-
-### 11.7 `handoff_analyzer.py`
-
-Searches text for lines containing:
-
-- `handoff`.
-- `TODO`.
-- `FIXME`.
-
-It returns matching paths and matching lines to help teams identify incomplete work or transfer notes.
+- **What it does**: Compares normalized HTTP route paths and methods (e.g. `GET /api/users`) between frontend and backend.
+- **What it does NOT do**: It does **not** validate JSON request/response body schemas, TypeScript types against Pydantic models, query parameter types, database constraints, or semantic AI compatibility.
 
 ---
 
-## 12. File filtering
+## 17. Error Contract
 
-### `app/utils/file_filters.py`
+All errors return standard JSON with a `"detail"` string or validation structure.
 
-The default ignored directory names are:
+### Error Status Codes
+
+| Status Code | Reason | Example Response Body |
+|---|---|---|
+| `400 Bad Request` | Invalid repository URL, non-file path request, or binary file requested. | `{"detail": "repo_url must be a public github.com owner/repository URL"}` |
+| `401 Unauthorized` | Missing or invalid `X-Baton-Key` (when `BATON_ACCESS_KEY` is configured). | `{"detail": "Invalid or missing X-Baton-Key"}` |
+| `404 Not Found` | Repository, branch, or file does not exist on GitHub. | `{"detail": "Not Found"}` |
+| `413 Payload Too Large` | Requested file exceeds `MAX_FILE_SIZE_BYTES` (200 KB). | `{"detail": "File exceeds configured size limit"}` |
+| `422 Unprocessable Entity` | Pydantic request body validation failure. | `{"detail": [{"loc": ["body", "task"], "msg": "Field required", "type": "missing"}]}` |
+| `429 Too Many Requests` | GitHub API rate limit reached. | `{"detail": "API rate limit exceeded for user..."}` |
+| `502 Bad Gateway` | Network error or timeout contacting GitHub API. | `{"detail": "GitHub request failed: [Errno 110] Connection timed out"}` |
+
+### Frontend Error Handling Rules
+
+1. Always inspect `response.status` and parse `response.json().detail`.
+2. Differentiate between:
+   - **Operator key errors (`401`)**: Prompt user to check the configured `X-Baton-Key`.
+   - **GitHub access errors (`404` / `429`)**: Prompt user to provide a GitHub Personal Access Token via `X-GitHub-Token`.
+   - **Size limit errors (`413`)**: Notify user that the requested file exceeds the 200 KB limit.
+   - **Network/Upstream errors (`502`)**: Surface a clean retry prompt.
+
+---
+
+## 18. Frontend Integration Rules
+
+When building the Baton frontend, follow these strict development rules:
+
+1. **Treat the Backend as Completely Stateless**: Do not assume the backend stores projects, users, or results. Manage active workspace state in frontend state/storage.
+2. **Do Not Invent Nonexistent APIs**: Do not invent `/api/v1/auth/login`, `/api/v1/projects/save`, `/api/v1/teams/update`, or `/api/v1/git/commit`.
+3. **Use a Centralized API Client**: Encapsulate all backend HTTP communication in a dedicated service layer (e.g. `src/services/batonApi.ts`).
+4. **Pass Environment-Driven Base URLs**: Read backend URL from `import.meta.env.VITE_BATON_API_URL` (or equivalent) rather than hardcoding `http://localhost:8000`.
+5. **Attach Required Headers Consistently**: Include `X-Baton-Key` and `X-GitHub-Token` when configured.
+6. **Support All Five UI States**: Every asynchronous view must gracefully handle:
+   - *Idle / Uninitialized*
+   - *Loading / Processing*
+   - *Success / Data Loaded*
+   - *Partial / Skipped Files Warning*
+   - *Error / Retry*
+7. **Handle Skipped Files Explicitly**: When `metadata.skipped_files` or `analysis_warnings` are non-empty, inform the user clearly in the UI.
+8. **Treat Markdown and Context as Data**: Render Markdown using safe Markdown renderers (e.g. `react-markdown` with syntax highlighting). Never evaluate context strings as executable JavaScript.
+9. **Never Expose Private Server Secrets**: Do not attempt to query or log backend environment variables from the client.
+
+---
+
+## 19. Backend Capability Matrix
+
+This matrix clarifies what is implemented in Baton V1 vs. what is a future vision or client-only concern:
+
+| Capability | Backend V1 Status | Frontend May Use Now? | Implementation Details / Notes |
+|---|---|---|---|
+| **Repository Validation** | ✅ Supported | Yes | `POST /api/v1/github/validate-repository` |
+| **Branch Listing** | ✅ Supported | Yes | `GET /api/v1/github/branches` |
+| **Tree Inspection** | ✅ Supported | Yes | `GET /api/v1/github/tree` |
+| **File Reading** | ✅ Supported | Yes | `GET /api/v1/github/file` (UTF-8, ≤ 200 KB) |
+| **Folder Analysis** | ✅ Supported | Yes | `POST /api/v1/analysis/folder` |
+| **Repository Analysis** | ✅ Supported | Yes | `POST /api/v1/analysis/repository` |
+| **Context Generation** | ✅ Supported | Yes | `POST /api/v1/context` |
+| **Prompt Assembly** | ✅ Supported | Yes | `POST /api/v1/prompt` |
+| **Conflict Detection** | ✅ Supported | Yes | `POST /api/v1/conflicts` (Path overlap) |
+| **Dual-Branch Integration** | ✅ Supported | Yes | `POST /api/v1/integration` (Route comparison) |
+| **Operator Access Key** | ✅ Supported | Yes | Optional `X-Baton-Key` header |
+| **User Accounts / Login** | ❌ Not in Backend | Client-side only if needed | No user tables or auth endpoints exist in V1. |
+| **Persistent Project Storage** | ❌ Not in Backend | Client-side only (localStorage) | Backend does not retain past analyses. |
+| **Team Management API** | ❌ Not in Backend | Client-side state | Schema exists for types, but no DB CRUD endpoints. |
+| **GitHub OAuth Flow** | ❌ Not in Backend | Client/PAT based | Frontend passes user PAT via `X-GitHub-Token`. |
+| **Git Write / Commit / PR** | ❌ Not Supported | No | Baton is strictly read-only. |
+| **LLM Execution / Chat API** | ❌ Not Supported | No | Baton outputs prompts/context for external LLMs. |
+| **Background Jobs / Webhooks** | ❌ Not in Backend | No | Stateless request-response only. |
+| **Real-Time WebSockets** | ❌ Not in Backend | No | Standard HTTP REST API. |
+
+---
+
+## 20. What the Backend Does NOT Own
+
+The following responsibilities belong exclusively to the frontend client and external workflows:
+
+- **User Interface & Visual Design**: Component layout, dark/light themes, animations, glassmorphism, responsive navigation.
+- **Client State & Persistence**: Retaining active repositories, custom prompt history, team member rosters, and user preferences in `localStorage` or IndexedDB.
+- **Clipboard Interactions**: Copying generated context or prompts to the user's clipboard.
+- **External AI Execution**: Sending generated prompts to Anthropic Claude, OpenAI ChatGPT, Cursor, Windsurf, or custom LLM endpoints.
+- **Git Write Operations**: Staging, committing, pushing, or opening PRs via local Git CLI or external tools.
+
+---
+
+## 21. Security and Trust Boundary
 
 ```text
-node_modules
-.git
-dist
-build
-coverage
-__pycache__
-.venv
-venv
-assets
+┌─────────────────────────────────────────────────────────┐
+│               Untrusted Browser / Client                │
+└────────────────────────────┬────────────────────────────┘
+                             │ Untrusted Inputs (Repo URLs, Branch Names)
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Baton V1 Backend                     │
+│  - Never executes repository code                       │
+│  - Bounded string scanning & regex                      │
+│  - File size & count limits enforced                    │
+└────────────────────────────┬────────────────────────────┘
+                             │ Read-Only Queries
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                   GitHub Public/Private                 │
+└─────────────────────────────────────────────────────────┘
 ```
 
-The default ignored lockfile names are:
+1. **Repository Code Is Untrusted**: The backend treats all file contents returned from GitHub as untrusted text. It never runs `eval()`, `exec()`, or sub-processes on repository files.
+2. **Frontend XSS Prevention**: The frontend must sanitize and safely render repository text, file trees, and Markdown.
+3. **Token Safety**: GitHub tokens passed via `X-GitHub-Token` are held only in request memory and discarded after request completion.
+4. **No Secret Leakage**: The backend never returns server environment variables or the server-side `GITHUB_TOKEN` in response payloads.
+
+---
+
+## 22. V1 Limitations
+
+- **Stateless**: No server-side session, history, or caching across requests.
+- **Read-Only**: No Git write or push support.
+- **Deterministic Pattern Matching**: Route and type extractors use regex patterns rather than full multi-file compiler AST semantic analysis.
+- **Analysis Bounds**: Maximum 100 files analyzed per run; maximum 200 KB per individual file.
+- **Supported Provider**: Public or token-authenticated `github.com` repositories only (no GitLab, Bitbucket, or self-hosted GitHub Enterprise Server in V1).
+- **Text Files Only**: Binary files (images, audio, archives, compiled binaries) are filtered and cannot be analyzed.
+
+---
+
+## 23. Non-Goals
+
+The following are explicitly **non-goals** for Baton V1 and must not be implemented or assumed:
+
+- A multi-tenant user authentication and billing system.
+- A database-backed project management platform.
+- An automated GitHub write bot or PR merging tool.
+- An embedded LLM code generation or agent execution runtime.
+- A full-featured online IDE or code editor.
+- A CI/CD build runner or automated test executor.
+
+---
+
+## 24. Frontend Quick Reference
+
+### Base URL
+- Local: `http://localhost:8000`
+- Production: Environment-configured URL (e.g. `VITE_BATON_API_URL`)
+
+### Headers
+- `X-Baton-Key`: Optional operator access key (required if backend `BATON_ACCESS_KEY` is set).
+- `X-GitHub-Token`: Optional GitHub Personal Access Token (for private repos and higher rate limits).
+- `Content-Type`: `application/json`
+
+### Route Cheatsheet
 
 ```text
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+HEALTH:
+GET  /health                                 -> {"status":"ok","service":"baton-backend"}
+GET  /api/health                             -> {"status":"ok","service":"baton-backend"}
+
+GITHUB:
+POST /api/v1/github/validate-repository      -> Body: {"repo_url":"https://github.com/o/r"}
+GET  /api/v1/github/branches?owner=&repo=    -> Response: {"branches":[{"name":"...","sha":"..."}]}
+GET  /api/v1/github/tree?owner=&repo=&branch=&path= -> Response: {"items":[{"path":"...","type":"..."}]}
+GET  /api/v1/github/file?owner=&repo=&branch=&path= -> Response: {"path":"...","size":...,"content":"...","language":"..."}
+
+ANALYSIS:
+POST /api/v1/analysis/folder                 -> Body: {"owner":"...","repo":"...","branch":"...","folder":"..."}
+POST /api/v1/analysis/repository             -> Body: {"owner":"...","repo":"...","branch":"..."}
+
+CONTEXT & PROMPT:
+POST /api/v1/context                         -> Body: {"owner":"...","repo":"...","branch":"...","folder":"","include_markdown":true}
+POST /api/v1/prompt                          -> Body: {"task":"...","context":"...","constraints":["..."]}
+
+COORDINATION & INTEGRATION:
+POST /api/v1/conflicts                       -> Body: {"files":[],"branches":{"b1":["f1"],"b2":["f1"]}}
+POST /api/v1/integration                     -> Body: {"owner":"...","repo":"...","branch":"...","frontend_branch":"...","backend_branch":"..."}
 ```
-
-The default binary-looking extensions include:
-
-```text
-.png .jpg .jpeg .gif .webp .ico .pdf .zip
-.woff .woff2 .ttf .mp3 .mp4 .mov .exe .bin
-```
-
-Important source and configuration files are not intentionally excluded, including `package.json`, `requirements.txt`, `pyproject.toml`, TypeScript configuration, source folders, route folders, types, schemas, models, and mock folders.
-
-Filtering is path-based and conservative. It is not a complete MIME detector.
-
----
-
-## 13. Generators and utilities
-
-### `app/generators/context_generator.py`
-
-Converts analysis JSON into readable Markdown and adds a rough token estimate. The generated document begins with:
-
-```markdown
-# Baton Repository Context
-```
-
-The output is clipped by byte size using `fit_context`.
-
-### `app/generators/prompt_generator.py`
-
-Creates a simple prompt containing:
-
-1. A Baton repository role statement.
-2. The requested task.
-3. Constraints as bullet points.
-4. The supplied repository context.
-
-### `app/utils/token_budget.py`
-
-Provides:
-
-- `estimate_tokens(text)`: approximately `len(text) / 4`.
-- `fit_context(text, max_bytes)`: clips UTF-8 content without breaking a multibyte character and adds a truncation marker.
-
-### `app/utils/text_utils.py`
-
-Provides:
-
-- File-extension language detection.
-- Regex-based line extraction.
-- Simple text truncation.
-
----
-
-## 14. Conflict and integration services
-
-### `app/services/conflict_service.py`
-
-Builds a map from file path to branches touching the path. Any path associated with more than one branch is returned as a shared-file conflict.
-
-This is useful for early coordination, but it is not a Git merge engine.
-
-### `app/services/integration_service.py`
-
-The reusable `compare(frontend, backend)` function compares route lists from two analysis results and returns:
-
-- Frontend routes.
-- Backend routes.
-- Frontend routes without a backend match.
-- Backend routes without a frontend match.
-- A boolean `compatible` value.
-
-Route strings must have compatible formatting for a direct match.
-
----
-
-## 15. Error behavior
-
-`app/core/exceptions.py` defines `BatonError`, which carries a message and an HTTP status code. The FastAPI exception handler serializes it as:
-
-```json
-{
-  "detail": "error message"
-}
-```
-
-Typical statuses include:
-
-| Status | Meaning |
-|---:|---|
-| `400` | Invalid repository URL, unsupported path, or invalid request condition. |
-| `401` | Missing or invalid `X-Baton-Key`. |
-| `404` | GitHub resource was not found, as propagated from GitHub. |
-| `413` | File is larger than the configured maximum. |
-| `429` | GitHub rate limiting, if returned by GitHub. |
-| `502` | Network-level failure when contacting GitHub. |
-
-FastAPI and Pydantic handle malformed request bodies and missing required query parameters with standard validation responses.
-
----
-
-## 16. Deployment
-
-### Render configuration
-
-`render.yaml` defines a Python web service:
-
-```yaml
-services:
-  - type: web
-    name: baton-backend
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
-```
-
-Render should be configured with:
-
-```text
-BATON_ENV=production
-BATON_ACCESS_KEY=<strong random operator key>
-GITHUB_TOKEN=<optional GitHub read token>
-FRONTEND_ORIGINS=https://your-frontend.example
-MAX_FILE_SIZE_BYTES=200000
-MAX_TOTAL_CONTEXT_BYTES=2000000
-MAX_FILES_PER_ANALYSIS=100
-```
-
-Do not commit the production values.
-
-### Local setup
-
-From the backend workspace:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn app.main:app --reload
-```
-
-The API should then be available at:
-
-```text
-http://localhost:8000
-```
-
-Interactive API documentation is provided automatically by FastAPI at:
-
-```text
-http://localhost:8000/docs
-http://localhost:8000/redoc
-```
-
----
-
-## 17. Testing
-
-The repository includes six focused test modules:
-
-| Test file | Coverage |
-|---|---|
-| `tests/test_health.py` | Health endpoint response. |
-| `tests/test_analysis.py` | Basic deterministic stack/repository analysis. |
-| `tests/test_context.py` | Markdown context generation. |
-| `tests/test_prompt.py` | Prompt template generation. |
-| `tests/test_conflicts.py` | Shared-file conflict detection. |
-| `tests/test_integration.py` | Integration endpoint request handling. |
-
-Run the project tests with:
-
-```bash
-PYTHONPATH=. pytest -q --import-mode=importlib \
-  tests/test_health.py \
-  tests/test_analysis.py \
-  tests/test_context.py \
-  tests/test_prompt.py \
-  tests/test_conflicts.py \
-  tests/test_integration.py
-```
-
-The validation completed successfully with all six project tests passing.
-
-The explicit `--import-mode=importlib` option avoids collisions with an unrelated installed package named `tests` in some sandbox environments.
-
----
-
-## 18. Frontend integration guidance
-
-The frontend can use the backend in this general sequence:
-
-1. Call `/health` to verify availability.
-2. Submit a GitHub URL to `/api/v1/github/validate-repository`.
-3. Display the default branch and visibility.
-4. Load branches from `/api/v1/github/branches`.
-5. Display the tree through `/api/v1/github/tree`.
-6. Request individual files through `/api/v1/github/file` when needed.
-7. Run folder or repository analysis.
-8. Generate Markdown context.
-9. Generate a task prompt using the context.
-10. Send the resulting prompt to the user's external AI coding workflow.
-
-For production, the frontend should send:
-
-```http
-X-Baton-Key: <operator key>
-```
-
-The frontend should not expose the server-side `GITHUB_TOKEN` to browsers. A request-level GitHub token can be sent as `X-GitHub-Token` only when the product explicitly wants the operator to provide a temporary token.
-
----
-
-## 19. Current limitations
-
-The following are deliberate V1 limitations:
-
-1. No persistent database or saved analysis sessions.
-2. No user accounts, teams, roles, or login UI.
-3. No OAuth flow for GitHub.
-4. No GitHub write operations.
-5. No webhook processing.
-6. No background jobs or queues.
-7. No WebSockets or streaming analysis.
-8. No LLM calls.
-9. No full AST parsing.
-10. No full Git diff or merge-conflict analysis.
-11. No recursive content retrieval beyond configured analysis limits.
-12. No complete language-server or dependency graph analysis.
-13. No binary file inspection.
-14. No GitHub Enterprise, GitLab, or Bitbucket support.
-15. The integration route is a conservative readiness endpoint; the reusable route comparison function is not wired into a complete two-branch fetching workflow.
-16. The context `include_markdown` field is retained for API compatibility, while the current service always returns Markdown.
-17. The initial tree filtering is path-based and may not identify every generated or binary file.
-
-These constraints keep V1 understandable, deployable, and safe for a small Mission Control operator.
-
----
-
-## 20. Recommended next steps
-
-If the backend is extended after V1, the safest order is:
-
-1. Add stronger unit tests for GitHub response mapping using mocked HTTPX responses.
-2. Add explicit response schemas to every route.
-3. Add pagination support for repositories with more than 100 branches or tree entries.
-4. Improve file-type detection using response metadata and content sniffing.
-5. Add richer route and API-call parsing without executing repository code.
-6. Wire the integration endpoint to fetch and compare two branch analyses.
-7. Add structured warnings when files are skipped because of limits.
-8. Add request correlation IDs and safe operational logging without logging tokens.
-9. Add rate-limit-aware GitHub error messages.
-10. Add an explicit cache only if performance requires it and if token/repository privacy requirements are defined first.
-
-Any future additions should preserve the core rules: read-only GitHub access, no secret leakage, no repository code execution, no unnecessary infrastructure, and no unapproved architectural expansion.
-
-
----
-
-## 21. Master Solution Blueprint audit and correction log
-
-This section records the non-destructive audit performed against `BATON_Master_Solution_Blueprint.md`.
-
-### 21.1 Existing structure preserved
-
-The current workspace is already the backend application root, so the existing `app/` architecture was preserved. The implementation continues to use:
-
-```text
-app/
-├── api/routes/
-├── core/
-├── schemas/
-├── services/
-├── analyzers/
-├── generators/
-└── utils/
-```
-
-The workspace must not be changed into `backend/backend/`. In the final monorepo, this workspace is intended to be placed at `project-root/backend/`.
-
-No working route, service, analyzer, generator, or test was deleted.
-
-### 21.2 Blueprint-aligned corrections applied
-
-The following targeted changes were made:
-
-1. **Repository freshness metadata**
-   - Analysis now retains the Git tree snapshot SHA as `metadata.commit`.
-   - Analysis now records an actual UTC generation timestamp in `metadata.generated`.
-   - Analysis reports `metadata.files_analyzed`.
-
-2. **Omitted-content reporting**
-   - Files skipped because of size, count, binary/decoding problems, or retrieval failures are recorded in `metadata.skipped_files`.
-   - Analysis warnings state when relevant files were omitted.
-   - Context generation returns an `omitted` array in addition to Markdown and the token estimate.
-
-3. **Blueprint `context.md` shape**
-   - Generated context now starts with `# Baton Context`.
-   - It includes the blueprint sections for source, requesting member, do-not-touch boundaries, stack, structure, rules, source member, completed work, frontend expectations, routes, API calls, types/data shapes, mock data, environment variables, handoff, shared files, integration issues, stray files, not-detected facts, and verification files.
-   - Unconfigured Mission Control fields are explicitly labeled rather than invented.
-   - The existing `Baton Repository Context` label is retained for compatibility with the earlier V1 output.
-
-4. **File language detection**
-   - Individual GitHub file responses now include the detected language when the extension is recognized.
-
-5. **Integration checking**
-   - The existing integration endpoint remains backward-compatible when branch pairs are not supplied.
-   - When both `frontend_branch` and `backend_branch` are supplied, the backend now performs real read-only analyses of both branches and returns route comparison output.
-   - No GitHub write operation is introduced.
-
-6. **Health compatibility**
-   - The original `/health` endpoint remains available.
-   - A non-documented compatibility alias `/api/health` was added to match the blueprint's Render health-check convention.
-   - `render.yaml` now uses `/api/health` for the Render health check.
-
-### 21.3 Blueprint items intentionally not invented
-
-The uploaded blueprint describes product capabilities and a shared-contract philosophy, but it does not provide a frozen route-by-route API table with exact methods, request bodies, response schemas, error codes, and auth rules. Therefore, no new unapproved route families were invented.
-
-The following blueprint features remain explicitly outside the current stateless V1 contract unless a later API contract defines them:
-
-- Mission Control team/member persistence.
-- Roles, duties, ownership configuration, and Team Rules storage.
-- Repository skeleton initialization and GitHub commits.
-- `contracts/api.md` and `contracts/data.md` management.
-- Full project structure validation.
-- Recent commit extraction.
-- Line-level conflict analysis.
-- Full two-branch contract/type compatibility analysis.
-- Database-backed configuration.
-
-This is intentional: the original V1 implementation rules prohibit databases, authentication systems, GitHub writes, background workers, and extra architecture. The current backend reports missing configuration as `Not configured` or `Not detected` rather than falsely claiming that the capability exists.
-
-### 21.4 Contract caution
-
-The existing route set remains:
-
-```text
-GET  /health
-GET  /api/health                 compatibility alias
-POST /api/v1/github/validate-repository
-GET  /api/v1/github/branches
-GET  /api/v1/github/tree
-GET  /api/v1/github/file
-POST /api/v1/analysis/folder
-POST /api/v1/analysis/repository
-POST /api/v1/context
-POST /api/v1/prompt
-POST /api/v1/conflicts
-POST /api/v1/integration
-```
-
-Because the Master Solution Blueprint does not specify replacement payload contracts for these routes, their existing V1 request shapes were preserved to avoid breaking the frontend or existing integrations.
