@@ -1,0 +1,50 @@
+{
+  "specification": {"PRD.md": "# Product requirements\n- Users can authenticate with email OTP.\n- Expose GET /health.\n"},
+  "readme": {"README": "# A handbook\nThis repository contains operating instructions.\n"},
+  "ml": {
+    "README.md": "# Image experiments\nResearch methodology and baseline evaluation.\n",
+    "requirements.txt": "torch>=2\npandas>=2\nscikit-learn>=1\n",
+    "dataset/images.csv": "path,label\na.png,cat\n",
+    "pipeline/preprocess.py": "import pandas as pd\nfrom sklearn.preprocessing import StandardScaler\ndef preprocess():\n    data = pd.read_csv('dataset/images.csv')\n    return data.dropna()\n",
+    "pipeline/model.py": "import torch\nfrom torch import nn\nclass ImageModel(nn.Module):\n    def forward(self, inputs):\n        return inputs\n",
+    "pipeline/train.py": "from .model import ImageModel\ndef train(model, loss, optimizer):\n    model.train()\n    loss.backward()\n    optimizer.step()\n",
+    "pipeline/evaluate.py": "from sklearn.metrics import accuracy_score\ndef evaluate(model, inputs):\n    model.eval()\n    return model.predict(inputs)\n",
+    "experiments/baseline.ipynb": "{\"cells\":[{\"cell_type\":\"code\",\"source\":[\"from sklearn.metrics import accuracy_score\\n\"]}],\"nbformat\":4}",
+    "artifacts/model.pth": ""
+  },
+  "frontend": {
+    "package.json": "{\"dependencies\":{\"react\":\"^18\"},\"scripts\":{\"build\":\"vite build\"}}",
+    "odd_name/App.tsx": "import React from 'react';\nexport function App() { return <main>Hello</main>; }\n",
+    "odd_name/api.ts": "export const loadItems = () => fetch('/api/items');\n"
+  },
+  "backend": {
+    "requirements.txt": "fastapi\nuvicorn\n",
+    "engine/main.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health():\n    return {'status': 'ok'}\n",
+    "engine/models.py": "from pydantic import BaseModel\nclass Item(BaseModel):\n    name: str\n"
+  },
+  "bookos": {
+    "README.md": "# Book learning\n## Features\n- Ask Book using `askBook` with retrieval and fallback behavior.\n",
+    "AGENTS.md": "# Rules\n- Always preserve shared contracts.\n- Never execute model artifacts.\n",
+    ".builder/rules/architecture.mdc": "# Rules\n- Keep retrieval separate from the AI adapter.\n",
+    "client/package.json": "{\"dependencies\":{\"react\":\"^18\"}}",
+    "server/package.json": "{\"dependencies\":{\"express\":\"^4\"}}",
+    "client/AskBook.tsx": "import React from 'react';\nimport { AskRequest } from '../shared/contracts';\nexport async function askBook(body: AskRequest) { return fetch('/api/ask-book', { method: 'POST', body: JSON.stringify(body) }); }\nexport function AskBook() { return <button>Ask</button>; }\n",
+    "server/index.ts": "import express from 'express';\nimport routes from './routes';\nconst app = express();\napp.use('/api', routes);\n",
+    "server/routes.ts": "import express from 'express';\nimport { AskRequest } from '../shared/contracts';\nimport { retrieve } from './retrieval';\nimport { answer } from './ai';\nconst router = express.Router();\nrouter.post('/ask-book', async function askBook(req, res) { const passages = retrieve(req.body as AskRequest); try { res.json(await answer(passages)); } catch { res.json({ answer: passages }); } });\nexport default router;\n",
+    "server/retrieval.ts": "import books from '../data/books.json';\nexport function retrieve(request) { return books.filter(book => book.id === request.bookId); }\n",
+    "server/ai.ts": "export async function answer(passages) { return passages.join(' '); }\n",
+    "shared/contracts.ts": "export interface AskRequest { bookId: string; question: string; }\n",
+    "data/books.json": "[{\"id\":\"book-1\",\"text\":\"A chapter\"}]",
+    "docs/architecture.md": "# Architecture\nRetrieval provides passages to the AI adapter. On adapter failure the route returns passages.\n"
+  },
+  "mixed": {
+    "README.md": "# Native utility collection\n",
+    "core/src/lib.rs": "pub struct Record { pub id: u64 }\npub fn normalize() {}\n",
+    "core/Cargo.toml": "[package]\nname = 'records'\nversion = '0.1.0'\n[lib]\npath = 'src/lib.rs'\n[dependencies]\nserde = '1'\n",
+    "cmd/main.go": "package main\nfunc main() {}\n",
+    "native/main.cpp": "#include <iostream>\nint main() { return 0; }\n",
+    "jvm/Service.java": "package sample;\npublic class Service { public String name() { return \"sample\"; } }\n"
+  },
+  "scripts": {"tasks/cleanup.sh": "#!/bin/sh\nfind . -name '*.tmp' -print\n", "tasks/report.ps1": "Write-Output 'ready'\n"},
+  "ambiguous": {"core/ui.tsx": "import React from 'react';\nexport function UI() { return <main />; }", "core/service.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health(): return {}\n"}
+}

@@ -57,7 +57,8 @@ def extract(
         extracted = _extract_from_document(doc.path, doc.role, text)
         for req in extracted:
             req_id_counter += 1
-            req.id = f"REQ-{req_id_counter:03d}"
+            if not req.id:
+                req.id = f"REQ-{req_id_counter:03d}"
             requirements.append(req)
 
     return requirements
@@ -89,13 +90,22 @@ def _extract_from_document(
         "acknowledgements", "credits",
     })
 
-    in_relevant_section = (role == "PRD")  # PRDs are fully relevant
+    in_relevant_section = (role in {"PRD", "REQUIREMENTS", "SPECIFICATION"})  # PRDs are fully relevant
     lines = text.splitlines()
 
+    in_fence = False
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
+
+        if stripped.startswith(('```', '~~~')):
+            in_fence = not in_fence
+            i += 1
+            continue
+        if in_fence:
+            i += 1
+            continue
 
         # Heading detection
         h_match = re.match(r"^(#{1,4})\s+(.+)", stripped)
@@ -135,19 +145,22 @@ def _extract_from_document(
             # Multi-line bullet continuation
             j = i + 1
             while j < len(lines):
-                next_line = lines[j].strip()
-                if not next_line or re.match(r"^[-*+#]", next_line):
+                next_line = lines[j]
+                if not next_line.strip() or re.match(r"^[-*+#]|^\d+[.)]", next_line.strip()):
                     break
                 if next_line.startswith(("  ", "\t")):
                     content += " " + next_line.strip()
+                else:
+                    break
                 j += 1
 
-            if len(content) >= 10:  # skip trivial bullets
+            if len(content) >= 3:  # retain concise explicit requirements
                 req = _make_requirement(
                     path=path,
                     section=current_subsection or current_section,
                     intent=content,
                 )
+                req.source_line = i + 1
                 requirements.append(req)
             i = j
             continue
@@ -156,16 +169,21 @@ def _extract_from_document(
         num_match = re.match(r"^\d+[.)]\s+(.+)", stripped)
         if num_match:
             content = num_match.group(1).strip()
-            if len(content) >= 10:
+            if len(content) >= 3:
                 req = _make_requirement(
                     path=path,
                     section=current_subsection or current_section,
                     intent=content,
                 )
+                req.source_line = i + 1
                 requirements.append(req)
             i += 1
             continue
 
+        if re.search(r'\b(?:must|shall|should|will|users? can)\b', stripped, re.I) and len(stripped) >= 10:
+            req = _make_requirement(path, current_subsection or current_section, stripped)
+            req.source_line = i + 1
+            requirements.append(req)
         i += 1
 
     return requirements
@@ -177,7 +195,8 @@ def _make_requirement(
     intent: str,
 ) -> Requirement:
     return Requirement(
-        id="",   # filled by caller
+        id=(re.search(r'\b(?:REQ|FR|NFR)-[A-Za-z0-9-]+\b', intent).group(0) if re.search(r'\b(?:REQ|FR|NFR)-[A-Za-z0-9-]+\b', intent) else ''),
+        priority=(re.search(r'\b(?:P[0-3]|HIGH|MEDIUM|LOW)\b', intent).group(0) if re.search(r'\b(?:P[0-3]|HIGH|MEDIUM|LOW)\b', intent) else None),
         source_document=path,
         source_section=section,
         intent=intent,

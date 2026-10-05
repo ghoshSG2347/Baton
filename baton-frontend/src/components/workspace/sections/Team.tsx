@@ -10,7 +10,7 @@ import { generateId } from '@/lib/utils';
 export function Team({ state }: { state: WorkspaceStateHook }) {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
-    name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '',
+    name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '', doNotTouch: '', teamScope: '',
   });
 
   const members = state.isDemoMode && state.members.length === 0 ? DEMO_MEMBERS : state.members;
@@ -27,9 +27,11 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
       job: formData.job,
       depends_on: formData.dependsOn.split(',').map((d) => d.trim()).filter(Boolean),
       provides_to: formData.providesTo.split(',').map((p) => p.trim()).filter(Boolean),
+      do_not_touch: formData.doNotTouch.split(',').map((p) => p.trim()).filter(Boolean),
+      team_scope: formData.teamScope.split(',').map((p) => p.trim()).filter(Boolean),
     };
     state.addMember(member);
-    setFormData({ name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '' });
+    setFormData({ name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '', doNotTouch: '', teamScope: '' });
     setShowForm(false);
   };
 
@@ -78,6 +80,8 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
                 { key: 'role', label: 'Role', placeholder: 'Frontend Lead' },
                 { key: 'folders', label: 'Folders (comma-separated)', placeholder: '/frontend, /components' },
                 { key: 'job', label: 'Job', placeholder: 'Build the user interface...' },
+                { key: 'doNotTouch', label: 'Do not touch (comma-separated)', placeholder: 'database/, deployment/' },
+                { key: 'teamScope', label: 'Team scope (comma-separated)', placeholder: 'client/, shared/' },
                 { key: 'dependsOn', label: 'Depends On (comma-separated)', placeholder: 'Arjun' },
                 { key: 'providesTo', label: 'Provides To (comma-separated)', placeholder: 'Arjun' },
               ].map((field) => (

@@ -86,6 +86,7 @@ _PREFIX_ROLE: list[tuple[str, str]] = [
 _SEMANTIC_PATTERNS: list[tuple[str, str]] = [
     (r"prd", "PRD"),
     (r"product.?req", "PRD"),
+    (r"product.?(description|spec|brief)", "PRD"),
     (r"requirem", "REQUIREMENTS"),
     (r"architec", "ARCHITECTURE"),
     (r"design", "DESIGN"),
@@ -102,8 +103,8 @@ _SEMANTIC_PATTERNS: list[tuple[str, str]] = [
 
 # Rule instruction file patterns
 _RULE_PATH_PATTERNS: list[str] = [
-    r"^agents\.md$",
-    r"^claude\.md$",
+    r"(?:^|/)agents\.md$",
+    r"(?:^|/)claude\.md$",
     r"^gemini\.md$",
     r"^copilot.instructions\.md$",
     r"^\.builder/",
@@ -227,6 +228,8 @@ def _classify_doc_path(path: str) -> Optional[str]:
     """Return the documentation role for a path, or None if not a doc file."""
     lower_path = path.lower()
     filename = PurePosixPath(lower_path).name
+    if re.fullmatch(r'requirements(?:[-_.]\w+)?\.txt', filename):
+        return None  # dependency manifests are not product requirements
 
     # 1. Exact filename match
     if filename in _EXACT_ROLE:
@@ -245,6 +248,8 @@ def _classify_doc_path(path: str) -> Optional[str]:
             if re.search(pattern, filename, re.I):
                 return role
 
+    if PurePosixPath(path).suffix.lower() in {".md", ".mdc", ".rst", ".mdx"}:
+        return "DOCUMENTATION"
     return None
 
 

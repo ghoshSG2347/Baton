@@ -140,8 +140,8 @@ _PATH_SIGNALS: list[tuple[str, DirectoryRole, int]] = [
     (r"\.(tsx|jsx)$", DirectoryRole.FRONTEND, 3),
     (r"\.css$|\.scss$|\.sass$|\.less$", DirectoryRole.FRONTEND, 1),
     # Backend
-    (r"routes?/.*\.py$|controllers?/.*\.py$", DirectoryRole.BACKEND, 2),
-    (r"middleware/.*\.py$", DirectoryRole.BACKEND, 1),
+
+
     # Tests
     (r"test_.*\.(py|ts|js)$|.*\.(spec|test)\.(ts|js|tsx|jsx)$", DirectoryRole.TESTS, 3),
     (r"^tests?/|/__tests__/|/spec/", DirectoryRole.TESTS, 3),
@@ -154,7 +154,7 @@ _PATH_SIGNALS: list[tuple[str, DirectoryRole, int]] = [
     # Notebooks (ML)
     (r"\.ipynb$", DirectoryRole.ML_PIPELINE, 2),
     # Data files (ML/data)
-    (r"\.(csv|parquet|tsv|npy|npz|pkl|h5|hdf5)$", DirectoryRole.ML_PIPELINE, 2),
+    (r"\.(csv|parquet|tsv|npy|npz|pkl|h5|hdf5)$", DirectoryRole.DATA_PROCESSING, 1),
 ]
 
 
@@ -176,7 +176,7 @@ def classify_directories(
     dir_files: dict[str, list[str]] = {}
     for f in files:
         path = f.get("path", "")
-        if not path:
+        if not path or f.get("type") != "blob":
             continue
         parts = path.split("/")
         if len(parts) == 1:
@@ -194,16 +194,18 @@ def classify_directories(
     all_dirs: dict[str, list[str]] = {}
     for f in files:
         path = f.get("path", "")
-        if not path:
+        if not path or f.get("type") != "blob":
             continue
         parts = path.split("/")
+        if len(parts) == 1:
+            all_dirs.setdefault('.', []).append(path)
         # Consider up to 3 levels of nesting
         for depth in range(1, min(len(parts), 4)):
             dir_path = "/".join(parts[:depth])
             all_dirs.setdefault(dir_path, []).append(path)
 
     for dir_path, file_paths in sorted(all_dirs.items()):
-        if len(file_paths) < 2:
+        if not file_paths:
             continue
         if dir_path in seen_dirs:
             continue
@@ -229,10 +231,13 @@ def classify_directories(
         dir_contents = {p: contents[p] for p in file_paths if p in contents}
         for file_path, text in dir_contents.items():
             for pattern, role, weight in _CONTENT_SIGNALS:
+                if role == DirectoryRole.INFRASTRUCTURE and not (PurePosixPath(file_path).name.lower() == 'dockerfile' or file_path.endswith(('.tf', '.yml', '.yaml'))):
+                    continue
                 if re.search(pattern, text, re.I | re.MULTILINE):
                     scores[role] += weight
 
         if not scores:
+            classifications.append(DirectoryClassification(path=dir_path, role=DirectoryRole.UNKNOWN, observed_role=DirectoryRole.UNKNOWN.value, confidence=Confidence.UNKNOWN, evidence=file_paths))
             continue
 
         # Determine winner and confidence
@@ -240,7 +245,11 @@ def classify_directories(
         total_score = sum(scores.values())
         dominant_ratio = top_score / total_score if total_score > 0 else 0
 
-        if dominant_ratio >= 0.6:
+        competing = scores.most_common(2)
+        if len(competing) == 2 and competing[1][1] / top_score >= 0.6:
+            confidence = Confidence.LOW
+            role = DirectoryRole.AMBIGUOUS
+        elif dominant_ratio >= 0.6:
             confidence = Confidence.HIGH if top_score >= 5 else Confidence.MEDIUM
             role = top_role
         elif dominant_ratio >= 0.4:
@@ -267,10 +276,31 @@ def classify_directories(
             role=role,
             confidence=confidence,
             evidence=winning_patterns,
+            observed_role=role.value,
         ))
         seen_dirs.add(dir_path)
 
     return classifications
+
+
+def classify_shared(classifications, resolved_dependencies):
+    """Mark a domain directory shared only when both UI and server import it."""
+    role_by_path = {d.path: d.role for d in classifications}
+    consumers = {}
+    for source, targets in resolved_dependencies.items():
+        source_dirs = sorted((p for p in role_by_path if source.startswith(p + '/')), key=len)
+        source_role = role_by_path[source_dirs[-1]] if source_dirs else DirectoryRole.UNKNOWN
+        for target in targets:
+            for directory in classifications:
+                if target.startswith(directory.path + '/') and not source.startswith(directory.path + '/'):
+                    consumers.setdefault(directory.path, []).append((source, source_role))
+    for directory in classifications:
+        matches = consumers.get(directory.path, [])
+        if {DirectoryRole.FRONTEND, DirectoryRole.BACKEND} <= {role for _, role in matches} and directory.role in {DirectoryRole.UNKNOWN, DirectoryRole.AMBIGUOUS, DirectoryRole.SHARED}:
+            directory.role = DirectoryRole.SHARED
+            directory.observed_role = DirectoryRole.SHARED.value
+            directory.confidence = Confidence.HIGH
+            directory.evidence.extend(f'Imported by {source}' for source, _ in matches)
 
 
 def classify_root_files(files: list[dict]) -> list[str]:
@@ -312,10 +342,10 @@ def _collect_evidence(
 
     # Sample matching content patterns for the winning role
     matched_patterns: list[str] = []
-    for _, text in list(contents.items())[:5]:
+    for source_path, text in contents.items():
         for pattern, prole, _ in _CONTENT_SIGNALS:
             if prole == role and re.search(pattern, text, re.I | re.MULTILINE):
-                short_pat = pattern[:50].rstrip("|")
+                short_pat = source_path + ": " + pattern[:50].rstrip("|")
                 if short_pat not in matched_patterns:
                     matched_patterns.append(short_pat)
                 if len(matched_patterns) >= 3:

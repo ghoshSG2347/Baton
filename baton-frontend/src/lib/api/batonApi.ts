@@ -9,10 +9,12 @@ import type {
   ConflictResult,
   IntegrationResult,
 } from '@/types';
+import type { WorkspaceRequest, WorkspaceInspection, ChatAnswer, WorkspaceArtifact, ArtifactType, BranchComparison } from '@/types';
 
 const RAW_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
 const BASE_URL = RAW_URL.replace(/\/+$/, '');
-const BATON_KEY = import.meta.env.VITE_BATON_ACCESS_KEY || '';
+let batonAccessKey = '';
+export function setBatonAccessKey(value: string) { batonAccessKey = value; }
 
 export class BatonApiError extends Error {
   status: number;
@@ -41,14 +43,13 @@ async function apiRequest<T>(
     ...(options.headers as Record<string, string>),
   };
 
-  if (BATON_KEY) headers['X-Baton-Key'] = BATON_KEY;
+  if (batonAccessKey) headers['X-Baton-Key'] = batonAccessKey;
   if (githubToken) headers['X-GitHub-Token'] = githubToken;
 
   let res: Response;
   try {
     res = await fetch(url, { ...options, headers });
-  } catch (err) {
-    console.error(`[Baton API Network Error] ${options.method || 'GET'} ${url}:`, err);
+  } catch {
     throw new BatonApiError(
       'Unable to reach Baton backend. Check the backend URL or network connection.',
       0
@@ -84,7 +85,6 @@ async function apiRequest<T>(
     }
 
     const message = bodyDetail || defaultMsg;
-    console.error(`[Baton API Error] HTTP ${res.status} ${url}:`, message);
     throw new BatonApiError(message, res.status, bodyDetail || defaultMsg);
   }
 
@@ -92,6 +92,21 @@ async function apiRequest<T>(
 }
 
 export const batonApi = {
+  async inspectWorkspace(request: WorkspaceRequest, token?: string): Promise<WorkspaceInspection> {
+    return apiRequest('/api/v1/workspace/inspect', { method: 'POST', body: JSON.stringify(request) }, token);
+  },
+  async chat(request: WorkspaceRequest & { message: string; conversation_id?: string }, token?: string, signal?: AbortSignal): Promise<ChatAnswer> {
+    return apiRequest('/api/v1/workspace/chat', { method: 'POST', body: JSON.stringify(request), signal }, token);
+  },
+  async artifact(request: WorkspaceRequest & { artifact_type: ArtifactType; target?: string }, token?: string): Promise<WorkspaceArtifact> {
+    return apiRequest('/api/v1/workspace/artifacts', { method: 'POST', body: JSON.stringify(request) }, token);
+  },
+  async compareBranches(request: WorkspaceRequest & { compare_branch: string; compare_commit?: string }, token?: string): Promise<BranchComparison> {
+    return apiRequest('/api/v1/workspace/compare', { method: 'POST', body: JSON.stringify(request) }, token);
+  },
+  async source(request: WorkspaceRequest & { path: string; start_line?: number }, token?: string): Promise<{ path: string; content: string; start_line: number; end_line: number; partial: boolean; identity: { commit: string } }> {
+    return apiRequest('/api/v1/workspace/source', { method: 'POST', body: JSON.stringify(request) }, token);
+  },
   async checkHealth(): Promise<{ status: string; service: string }> {
     return apiRequest<{ status: string; service: string }>('/api/health');
   },

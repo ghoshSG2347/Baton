@@ -11,7 +11,7 @@ Its purpose is to define precisely what the Baton backend provides to frontend c
 When building or consuming the Baton system, three core documents work in synergy:
 
 1. **`BATON_Master_Solution_Blueprint.md`**: Defines the overall product vision, system architecture, workflow definitions, user personas, and feature intentions for Baton.
-2. **`BACKEND_CONTEXT.md` (This Document)**: Defines the frozen, currently implemented technical capabilities, HTTP API endpoints, request/response schemas, error contracts, and runtime boundaries of the Baton V1 backend.
+2. **`BACKEND_CONTEXT.md` (This Document)**: Defines the currently implemented technical capabilities, HTTP API endpoints, request/response schemas, error contracts, and runtime boundaries of the Baton V1 backend.
 3. **Frontend / UI Design Prompt**: Defines the visual layout, typography, interaction patterns, design tokens, animations, and component behavior for the user interface.
 
 > [!IMPORTANT]
@@ -35,7 +35,7 @@ The Baton V1 backend operates as a high-speed, deterministic context preparation
                              ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    Baton V1 Backend                     │
-│  - FastAPI / Python (Stateless)                         │
+│  - FastAPI / Python + bounded snapshot reuse                         │
 │  - Deterministic Analyzers & Pattern Extractors         │
 │  - Context, Prompt & Coordination Generators            │
 └────────────────────────────┬────────────────────────────┘
@@ -52,28 +52,28 @@ The Baton V1 backend operates as a high-speed, deterministic context preparation
 - **Deterministic Coordination**: The backend extracts structure, frameworks, routes, API calls, types, environment variables, mock fixtures, and handoff markers from repository snapshots.
 - **Context Synthesis**: It formats structured analysis data into clean, token-budgeted Markdown context packets ready for injection into external coding agents.
 - **Prompt Formulation**: It assembles standardized task prompts adhering to Baton coordination rules.
-- **No Embedded LLM**: Baton does **not** host, run, or call an internal LLM. It generates structured context and prompts to be handed off to external LLMs (e.g., Claude, ChatGPT, Cursor, Windsurf) by the user or client.
+- **Optional Server AI**: Part 3 adds a backend-only Gemini evidence selector. Baton validates selections and renders factual answers from canonical context records. No model is hosted locally and no provider credentials reach the frontend. See section 27.
 - **Read-Only Operation**: Baton does **not** push commits, create pull requests, alter branches, or modify repository contents.
 
 ---
 
 ## 3. V1 Architecture
 
-The Baton V1 backend is designed for zero-state reliability, speed, and simple horizontal scaling:
+The Baton V1 backend uses request-scoped GitHub access and bounded process-local intelligence reuse:
 
 - **Framework**: FastAPI on Python 3.11+.
-- **Stateless Execution**: Every request is standalone. The backend does not maintain sessions, persistent storage, or historical logs.
+- **Request-Scoped Access**: No sessions or durable project storage. Sanitized intelligence snapshots may be reused from a bounded in-memory store after a fresh GitHub authorization and commit check.
 - **GitHub Client**: Asynchronous HTTP client via `httpx.AsyncClient` communicating directly with `https://api.github.com`.
 - **Deterministic Pattern Extraction**: Regex and static AST-like matching across file contents (no arbitrary code execution).
 - **No Database**: No PostgreSQL, MySQL, SQLite, MongoDB, or ORM layers.
 - **No Message Broker / Background Workers**: No Redis, Celery, BullMQ, or long-running worker pools.
 - **No Repository Execution**: Repository code is treated as untrusted text and is never executed, imported, or evaluated.
 
-### What Statelessness Means for the Frontend
+### What Process-Local Reuse Means for the Frontend
 
-Because the backend does not persist data:
+Because the backend has no durable storage:
 - The backend does **not** store user accounts or profiles.
-- The backend does **not** persist project history, previous analysis runs, or saved prompts.
+- The backend does **not** persist project history or saved prompts. Process-local snapshot reuse is an optimization, not durable project history.
 - The backend does **not** retain uploaded files or GitHub tokens across requests.
 - The frontend is responsible for retaining client-side session state, user preferences, and in-flight workflows in memory or client-side storage (e.g., `localStorage`).
 
@@ -81,7 +81,7 @@ Because the backend does not persist data:
 
 ## 4. Backend Project Structure
 
-The actual frozen structure of the `baton-backend-v1` codebase is as follows:
+The original route/service structure remains compatible. Section 25 describes the canonical intelligence modules added to this structure:
 
 ```text
 baton-backend-v1/
@@ -425,13 +425,13 @@ Analyzes the entire repository (equivalent to calling folder analysis with `fold
     "branch": "main"
   }
   ```
-  *(Note: `branch` is optional and defaults to `""` which resolves to `HEAD` on GitHub).*
+  *(Note: `branch` is optional and defaults to `""`; collection resolves the repository default branch before resolving its commit.)*
 
 ---
 
-### Analysis Response Shape (Full Schema)
+### Analysis Response Shape (Legacy Fields)
 
-Both analysis endpoints return the exact same structured analysis JSON object:
+Both analysis endpoints return the same compatible fields below, plus additive `canonical_api` endpoint/consumer records. Existing clients may continue using the legacy fields:
 
 ```json
 {
@@ -450,7 +450,7 @@ Both analysis endpoints return the exact same structured analysis JSON object:
   },
   "stack": {
     "detected": ["React", "TypeScript", "Node.js"],
-    "languages": ["json", "markdown", "typescript"]
+    "languages": ["TypeScript"]
   },
   "file_tree": [
     {
@@ -512,22 +512,22 @@ Both analysis endpoints return the exact same structured analysis JSON object:
 | `metadata.repo` | Repository name. | Request payload. |
 | `metadata.branch` | Branch analyzed. | Request payload. |
 | `metadata.folder` | Scope folder analyzed (`""` for full repo). | Request payload. |
-| `metadata.commit` | Git commit SHA of the tree snapshot. | GitHub Git Tree response SHA. |
+| `metadata.commit` | Exact Git commit SHA; never a Git tree SHA. | GitHub commit resolution before all file reads. |
 | `metadata.generated` | ISO-8601 UTC timestamp of analysis. | Timestamp at execution. |
 | `metadata.files_analyzed` | Number of files read and inspected. | Read counter. |
-| `metadata.skipped_files` | List of file paths omitted due to size limit, count limit, or read errors. | Filter / exception tracker. |
+| `metadata.skipped_files` | All known files whose content was omitted (filters, secrets, limits, or read failures). | Canonical completeness projection. |
 | `stack.detected` | Recognized frameworks/platforms (`React`, `TypeScript`, `Python`, `Node.js`, `Python dependencies`). | Extension & key file heuristics. |
 | `stack.languages` | Sorted list of detected programming/data languages. | File extensions. |
-| `file_tree` | Filtered list of relevant tree items (`path`, `type`, `size`). | Git tree after `is_relevant` filtering. |
+| `file_tree` | Full returned inventory within analysis scope (`path`, `type`, `size`, `sha`, `mode`), including omitted-file metadata. | Commit-pinned Git tree; truncation is explicitly reported. |
 | `important_files` | Key architectural files (`package.json`, `requirements.txt`, `pyproject.toml`, `README.md`, `main.py`, `App.tsx`, `App.jsx`). | Path filename matching. |
-| `routes` | Server routes detected in Python/Node files (`"<path>: <route>"`). | Regex `(app\|router).(get\|post\|put\|patch\|delete)`. |
+| `routes` | Server routes as `source_file: METHOD /path`. | Projection of canonical API declarations and supported literal mounts. |
 | `api_calls` | Client HTTP endpoints called (`"<path>: <endpoint>"`). | Regex `fetch(...)` or `axios.<method>(...)`. |
 | `environment_variables` | Environment variables referenced in code. | Regex `process.env.VAR` or `os.environ['VAR']`. |
 | `types` | TypeScript interfaces and type aliases detected. | Regex `interface Name` or `type Name`. |
 | `mock_data` | Mock data files and test fixtures. | Paths or contents matching `mock`, `fixture`, `fake`, `dummyData`. |
 | `handoffs` | Code markers requiring attention (`path` and matched `items`). | Lines containing `handoff`, `TODO`, `FIXME`. |
 | `shared_files` | Shared file collisions (initialized as `[]`). | Analyzer container. |
-| `stray_files` | Uncategorized or out-of-structure files (initialized as `[]`). | Analyzer container. |
+| `stray_files` | Root-level file paths retained for legacy consumers; this is not evidence of architectural defects. | Canonical structure projection. |
 | `analysis_warnings` | Informational warnings (e.g. omitted files or empty folder). | Omission / empty check. |
 
 ---
@@ -539,8 +539,8 @@ To protect memory and stay within GitHub API budgets, Baton applies deterministi
 ### Active Limits (from Configuration)
 
 - `MAX_FILE_SIZE_BYTES`: **200,000 bytes** (~200 KB). Files exceeding this size are skipped.
-- `MAX_FILES_PER_ANALYSIS`: **100 files**. The backend reads at most 100 eligible files per analysis request.
-- `MAX_TOTAL_CONTEXT_BYTES`: **2,000,000 bytes** (~2 MB). The maximum byte length of generated Markdown context before truncation.
+- `MAX_FILES_PER_ANALYSIS`: **100 file-read attempts**. Failures consume the budget too; a file is never fetched twice during one collection.
+- `MAX_TOTAL_CONTEXT_BYTES`: **2,000,000 bytes** (~2 MB). Both total collected UTF-8 content and generated Markdown are bounded by this setting. Metadata-only inventory remains available for omitted files.
 
 ### Excluded Directories, Files, and Extensions
 
@@ -561,35 +561,35 @@ The frontend should check `analysis.metadata.skipped_files` and `analysis.analys
 
 ### `POST /api/v1/context`
 
-Runs repository/folder analysis and formats the structured results into an optimized, standardized Markdown context document ready for ingestion by coding agents.
+Projects an authorized, current canonical snapshot into a detailed briefing. It never collects a tree, reads repository files, invokes an LLM or calls analysis. Explicitly run the repository/folder analysis endpoint first. Missing, stale, wrong-version or differently scoped snapshots return HTTP 409 with: "The repository intelligence snapshot is unavailable/stale and must be refreshed."
 
-- **Request Body**:
-  ```json
-  {
-    "owner": "my-org",
-    "repo": "my-repo",
-    "branch": "main",
-    "folder": "",
-    "include_markdown": true
-  }
-  ```
-- **Response Shape** (`200 OK`):
-  ```json
-  {
-    "analysis": {
-      /* Full structured analysis JSON object */
-    },
-    "markdown": "# Baton Context\n> Baton Repository Context\n\n## Source\n- Repository: my-org/my-repo\n- Branch: main\n- Commit: 6809b645...\n- Generated: 2026-10-04T12:00:00+00:00\n\n## Requesting Member\n- Name: Not configured\n- Role: Not configured\n- Owns: Not configured\n\n## Do Not Touch\n- No ownership boundaries configured\n\n## Project Stack\n- React\n- TypeScript\n\n## Project Structure\n- package.json\n- src/App.tsx\n\n## Team Rules\n- No team rules supplied\n\n## Source Member\n- Not configured\n\n## Completed Work\n- Deterministic repository scan completed\n\n## Detected Frontend Expectations\n- User\n- ApiResponse\n\n## Routes\n- app/api/routes/users.py: /api/users\n\n## API Calls\n- src/services/api.ts: /api/users\n\n## Types / Data Shapes\n- User\n- ApiResponse\n\n## Mock Data\n- src/mocks/userFixture.json\n\n## Environment Variables\n- DATABASE_URL\n\n## Handoff\n- src/App.tsx\n\n## Shared Files\n- None detected\n\n## Possible Integration Issues\n- None detected\n\n## Stray / Out-of-structure Files\n- None detected\n\n## Not Detected\n- Ownership configuration, contracts, and recent commit subjects were not supplied to this request.\n\n## Files Included for Verification\n- package.json\n- src/App.tsx",
-    "estimated_tokens": 420,
-    "omitted": []
-  }
-  ```
+The existing owner/repo/branch/folder/include_markdown fields remain supported. New fields are optional; the default context type is `project`.
 
-### Key Context Properties
+```json
+{
+  "owner": "my-org",
+  "repo": "my-repo",
+  "branch": "main",
+  "folder": "",
+  "context_type": "role",
+  "member": {
+    "name": "Developer",
+    "role": "Frontend Developer",
+    "responsibilities": ["Maintain the Ask Book interface"],
+    "ownership": ["client/"],
+    "do_not_touch": ["server/", "shared/"],
+    "team_scope": ["client/"]
+  },
+  "task": "Inspect the existing Ask Book integration",
+  "constraints": ["Preserve existing request contracts"],
+  "max_bytes": 100000,
+  "include_markdown": true
+}
+```
 
-- **`markdown`**: Complete structured Markdown formatted with standard Baton sections.
-- **`estimated_tokens`**: Deterministic estimation calculated as `len(text) // 4`. (Note: This is an approximation for context budgeting, not an exact BPE tokenizer count).
-- **`omitted`**: Array of strings noting any omitted files or notifications if context was truncated to fit `MAX_TOTAL_CONTEXT_BYTES`.
+An optional `commit` asserts the expected current branch SHA; a mismatch returns 409. Blank branch resolves the repository default branch. Valid context types are `project`, `role`, `task`, `ai_handoff`; invalid types return 422. `max_bytes` must be at least 1024 and is capped by `MAX_TOTAL_CONTEXT_BYTES`. Impossible Markdown budgets return 413, rather than a successful but unusable implementation briefing.
+
+Responses retain `analysis`, `markdown`, `estimated_tokens`, `omitted` and add `context`. `analysis` is the full legacy projection of the same canonical snapshot, including additive canonical API records. `context` contains identity, completeness, USER member/task configuration, relevance/boundaries, `usable`, a categorized omission manifest and section record metadata. Markdown contains 20 sections (see section 26). `estimated_tokens` uses the existing approximate character-count method, not a tokenizer. With `include_markdown:false`, Markdown is empty and its token estimate is zero; structured completeness/omissions remain available, including `usable:false` for an insufficient briefing budget.
 
 ---
 
@@ -766,7 +766,7 @@ All errors return standard JSON with a `"detail"` string or validation structure
 
 When building the Baton frontend, follow these strict development rules:
 
-1. **Treat the Backend as Completely Stateless**: Do not assume the backend stores projects, users, or results. Manage active workspace state in frontend state/storage.
+1. **Keep Workspace State in the Client**: Do not assume durable backend project storage. Bounded process-local snapshot reuse does not replace client state.
 2. **Do Not Invent Nonexistent APIs**: Do not invent `/api/v1/auth/login`, `/api/v1/projects/save`, `/api/v1/teams/update`, or `/api/v1/git/commit`.
 3. **Use a Centralized API Client**: Encapsulate all backend HTTP communication in a dedicated service layer (e.g. `src/services/batonApi.ts`).
 4. **Pass Environment-Driven Base URLs**: Read backend URL from `import.meta.env.VITE_BATON_API_URL` (or equivalent) rather than hardcoding `http://localhost:8000`.
@@ -806,7 +806,7 @@ This matrix clarifies what is implemented in Baton V1 vs. what is a future visio
 | **GitHub OAuth Flow** | ❌ Not in Backend | Client/PAT based | Frontend passes user PAT via `X-GitHub-Token`. |
 | **Git Write / Commit / PR** | ❌ Not Supported | No | Baton is strictly read-only. |
 | **LLM Execution / Chat API** | ❌ Not Supported | No | Baton outputs prompts/context for external LLMs. |
-| **Background Jobs / Webhooks** | ❌ Not in Backend | No | Stateless request-response only. |
+| **Background Jobs / Webhooks** | ❌ Not in Backend | No | Request-response only; no scheduled workers. |
 | **Real-Time WebSockets** | ❌ Not in Backend | No | Standard HTTP REST API. |
 
 ---
@@ -818,7 +818,7 @@ The following responsibilities belong exclusively to the frontend client and ext
 - **User Interface & Visual Design**: Component layout, dark/light themes, animations, glassmorphism, responsive navigation.
 - **Client State & Persistence**: Retaining active repositories, custom prompt history, team member rosters, and user preferences in `localStorage` or IndexedDB.
 - **Clipboard Interactions**: Copying generated context or prompts to the user's clipboard.
-- **External AI Execution**: Sending generated prompts to Anthropic Claude, OpenAI ChatGPT, Cursor, Windsurf, or custom LLM endpoints.
+- **External Coding Workflows**: Users can copy/export prompts to their tools. Integrated Gemini selection is exclusively a backend responsibility; the browser never calls a provider.
 - **Git Write Operations**: Staging, committing, pushing, or opening PRs via local Git CLI or external tools.
 
 ---
@@ -847,18 +847,18 @@ The following responsibilities belong exclusively to the frontend client and ext
 1. **Repository Code Is Untrusted**: The backend treats all file contents returned from GitHub as untrusted text. It never runs `eval()`, `exec()`, or sub-processes on repository files.
 2. **Frontend XSS Prevention**: The frontend must sanitize and safely render repository text, file trees, and Markdown.
 3. **Token Safety**: GitHub tokens passed via `X-GitHub-Token` are held only in request memory and discarded after request completion.
-4. **No Secret Leakage**: The backend never returns server environment variables or the server-side `GITHUB_TOKEN` in response payloads.
+4. **Secret Handling**: Request and server GitHub tokens are removed from collected content before findings are built. Sensitive files are omitted; environment template values and recognizable credential patterns are redacted. GitHub errors use generic text and never echo remote messages or tokens. No raw source archive is retained. See Section 25 for the limits of heuristic redaction.
 
 ---
 
 ## 22. V1 Limitations
 
-- **Stateless**: No server-side session, history, or caching across requests.
+- **No Durable State**: No server-side sessions or durable history. In-memory snapshots are local to a worker, evicted when bounded capacity is reached, and lost on restart/deploy.
 - **Read-Only**: No Git write or push support.
 - **Deterministic Pattern Matching**: Route and type extractors use regex patterns rather than full multi-file compiler AST semantic analysis.
-- **Analysis Bounds**: Maximum 100 files analyzed per run; maximum 200 KB per individual file.
+- **Analysis Bounds**: Maximum 100 file-read attempts, 200,000 bytes per file, and 2,000,000 collected UTF-8 bytes per run. Omitted files and GitHub tree truncation are recorded.
 - **Supported Provider**: Public or token-authenticated `github.com` repositories only (no GitLab, Bitbucket, or self-hosted GitHub Enterprise Server in V1).
-- **Text Files Only**: Binary files (images, audio, archives, compiled binaries) are filtered and cannot be analyzed.
+- **Static Text Analysis**: Binary/model artifacts may be classified from metadata, but are never executed or deserialized. Notebook code cells are parsed as text; notebook outputs are not retained.
 
 ---
 
@@ -911,3 +911,181 @@ COORDINATION & INTEGRATION:
 POST /api/v1/conflicts                       -> Body: {"files":[],"branches":{"b1":["f1"],"b2":["f1"]}}
 POST /api/v1/integration                     -> Body: {"owner":"...","repo":"...","branch":"...","frontend_branch":"...","backend_branch":"..."}
 ```
+
+
+## 25. Canonical Repository Intelligence (Part 1)
+
+### Architecture and consumers
+
+`AnalysisService.analyze_intelligence()` is the internal entry point. `app/intelligence/pipeline.py` produces the single `RepositoryIntelligence` dataclass in `models.py`. `RepositoryAnalyzer` and legacy stack, API, frontend-type and handoff entry points now delegate to canonical analysis rather than maintaining conflicting interpretations. Existing analysis/context routes still return compatible projections. Part 1 did not redesign context presentation or prompt generation. Part 2 context behavior is specified in sections 13 and 26.
+
+There is no mandatory LLM, repository execution, database, vector store, Redis, Celery or GitHub write operation. FastAPI, token precedence, CORS and Render configuration are preserved. Future Part 2 consumers should use the canonical model, not reconstruct facts from legacy strings.
+
+### Schema
+
+| Area | Canonical fields |
+|---|---|
+| Exact state | `owner`, `repo`, `branch`, `commit`, `generated`, `analysis_version`, `project_root`, `snapshot_status`, `repository_metadata` |
+| Identity and intent | `project_identity`, `project_summary`, `documentation_sources`, `documentation_content`, `repository_rules`, `requirements` |
+| Technologies | `project_types`, `project_type_evidence`, `languages`, `technologies`, `package_dependencies`, `package_scripts` |
+| Structure | `file_tree`, `parsed_files`, `directory_classifications`, `components` |
+| Relationships and contracts | `dependencies`, `resolved_dependencies`, `data_flows`, `api_endpoints`, `api_consumers`, `types`, `data_models` |
+| Data and operations | `data_sources`, `env_variables`, `config_files`, `tests_detected`, deployment findings |
+| Truth and coverage | `evidence`, confidence on findings, `conflicts`, `unknowns`, `risks`, `missing_work`, `analysis_warnings`, `completeness`, `user_overrides` |
+
+Snapshots retain the returned scoped file inventory with blob SHA/size/mode, sanitized documentation and parsed structural representations rather than complete source. Documentation references include both commit and blob SHA. File structures include symbols, line numbers, imports, entrypoints, parse status and evidence-based ML stage tags. Python uses `ast.parse`; other languages use bounded patterns. Java/Kotlin package/method and SQL table extraction are foundations, not a compiler-level type system.
+
+`EvidenceStatus` separates DOCUMENTED, OBSERVED, DERIVED, INFERRED, UNKNOWN, CONFLICTING and RECOMMENDED. Requirements are always DOCUMENTED; code evidence is stored separately. Directory classifications are labeled INFERRED with evidence/confidence. Components are DERIVED from classified paths. No recommendations are generated by the core pipeline.
+
+### Discovery and classification
+
+Documentation is discovered first from exact and semantic filenames, documentation paths, nested AGENTS/CLAUDE files, `.builder`, `.cursor`, `.github` instruction files and `.mdc` rules. Dependency `requirements*.txt` files are not mistaken for product requirements. Unrecognized Markdown receives a documentation role. Sanitized document text remains available beyond the legacy excerpt.
+
+Projects may have multiple types: frontend, backend/API, full-stack, ML, data science/pipeline, research, library/SDK, CLI, scripting/automation, mobile, desktop, embedded, game, infrastructure, documentation-only or unknown. Languages derive from file metadata/manifests, and technologies from dependencies/imports/configuration. Documentation, source comments and Python docstrings are excluded from observed technology/code detection. A directory called `backend` containing React is classified by its React/TSX evidence, not its name. Single-file and root components are included; competing evidence is AMBIGUOUS, absent evidence UNKNOWN. Shared domain paths require resolved imports from both frontend and backend consumers.
+
+Deployment findings distinguish actual configuration file presence from explicit documented deployment statements; a platform mention alone does not establish a deployment plan. No deployment or workflow execution is verified.
+
+The semantic map includes directories through three nesting levels and significant files through parsed structures. There is no requirement that a frontend, backend, API or database exists. ML files may identify dataset loading, preprocessing, training, model definitions, evaluation and inference independently. Data sources distinguish datasets, artifacts, fixtures, seeds, static consumed data, configuration and unknown structured files. Detected stage patterns do not prove a complete ML pipeline.
+
+### Intent versus reality and anti-hallucination
+
+Requirements retain explicit text, source section/line, identifiers and priority when supplied. Bullets, numbered lists and modal prose are extracted; fenced code examples are excluded. Matching searches observed symbols and endpoint declarations, never documentation text as implementation.
+
+Unmatched requirements are NOT_DETECTED, not proof they are unimplemented. Symbol matches are PARTIALLY_IMPLEMENTED candidates with LOW confidence, not certification of behavior. Only narrow literal requirements of the form `Expose GET /health.` can be marked IMPLEMENTED from the matching declaration; this confirms endpoint exposure only. No feature-completion percentages are computed. Explicit conflicting claims are preserved without resolving them by guessing.
+
+API declarations and consumers share `ApiEndpoint`. Methods, source files, supported handler/request/response/type references, normalized paths, callers, evidence and confidence are retained. Query/trailing slashes and equivalent parameter forms normalize; path case is preserved. Known literal FastAPI/Express mounts are resolved through local imports. Matching respects methods. External calls are distinguished from local routes. Frontend-only repositories do not automatically receive missing-backend conflicts.
+
+Contradictions include unmatched local API consumers when server declarations exist, present-tense documentation/framework claims versus collected code, documented API mismatches and mechanically opposite instructions. Future/planned statements are not treated as proof of an implementation conflict. Missing evidence can reflect bounded collection; conflict records preserve that uncertainty.
+
+### Snapshot store, authorization and staleness
+
+`SnapshotStore` defines `save`, `load`, `exists`, `invalidate` and `metadata`. `MemorySnapshotStore` is the V1 implementation, injectable into `AnalysisService`. Keys include normalized owner/repository, branch (case-sensitive), exact commit, folder scope and analysis version. Loads/saves return or retain defensive copies. Old analysis versions and unknown commits cannot be reused. Invalidation can target repository, branch, commit or folder. Compatibility module functions remain available.
+
+The default store holds at most 20 entries and approximately 40,000,000 serialized snapshot bytes; Python object overhead is additional. Old entries are evicted in insertion order. Metadata does not include tokens or secret values. Storage is process-local: instances/workers do not share it, and restarts/deployments erase it. Durable cross-instance reuse requires a future storage adapter; no database migration is introduced here.
+
+Every service request resolves the current commit through GitHub with that request's authorization, even before a cache hit. A Git tree SHA is never used as a commit identity. Cache misses fetch the tree and each selected file at the resolved commit, avoiding a moving-branch race. A changed HEAD triggers fresh analysis and a warning; an old commit is never silently returned as the new state. Explicit stale retrieval returns a copied STALE view and does not mutate the historical snapshot. Partial snapshots remain labeled PARTIAL after caching. Empty repositories without a resolvable commit yield uncached PARTIAL intelligence.
+
+### Limits, security and omissions
+
+All three existing collection limits are enforced before and after UTF-8 decoding where applicable. Documentation precedes manifests/config and other files in collection priority. Failed read attempts consume the count budget. Filtering removes content, not inventory metadata. Completeness records known discovered/read/omitted counts, omitted paths, per-file reasons, critical omissions and GitHub tree truncation. A truncated tree is never described as a complete inventory.
+
+Sensitive `.env` files, private keys and known credential files are omitted. Templates retain variable names only. Known request/server token values, recognizable token formats, bearer credentials, credential URLs, private-key blocks and secret assignments are redacted before excerpts, requirements, TODOs, parsed structures or snapshots are created. Environment required/optional status defaults to unknown unless established. No tokens are stored as model fields, logged, or echoed in GitHub errors. Authorization failures abort collection rather than caching misleading results.
+
+Repository instructions are untrusted findings, never commands for the server to execute. Python parsing, JSON/TOML parsing and notebook cell inspection do not import modules, execute scripts, evaluate expressions or load models. A parsed-file representation is not full source and does not contain notebook outputs.
+
+Heuristic redaction cannot recognize every possible secret concealed under an innocuous name or in arbitrary prose. Do not treat snapshots as an audited secret-scanning product. Raw source is deliberately not archived; recognizable secrets and supplied tokens are covered by regression tests.
+
+### Validation and remaining limits
+
+Run `python -B -m pytest -q -p no:cacheprovider` from `baton-backend-v1`. Fixtures include spec-only, README-only, ML, frontend-only, backend-only, BookOS-style, mixed-language, scripts and ambiguous directories. Tests cover rules, requirements, API mismatches, literal mounts, shape references, data relationships, source provenance, save/load/copy/isolation/eviction/staleness, collection budgets, authorization on cache hits, secrets, empty states and no source/notebook execution. Existing route/token/context/prompt/conflict/integration regressions remain in the suite.
+
+Extraction is intentionally conservative. Dynamic routes, nested/aliased mounts, compiler type resolution, semantic feature equivalence, runtime behavior, test coverage and general natural-language contradictions are not established. Non-Python symbol patterns may miss declarations or see source-like text. Missing code is never proof of absence. Part 1 did not build chat, role-context UI, final context presentation or PRD generation. Part 2 adds the context projection documented below; chat and PRD generation remain outside this phase.
+
+
+## 26. Detailed Context System (Part 2)
+
+### Flow and source of truth
+
+`ContextService` loads through `ContextSnapshotService`, then calls `context_generator.generate(RepositoryIntelligence, ...)`. The canonical dispatch delegates to `context_builder.build`; direct legacy-dictionary library callers retain their old compatibility formatter, which the API never uses. There is one canonical builder for all views. No new AI infrastructure or frontend redesign is introduced.
+
+The loader authorizes each request through GitHub commit resolution before reading the process-local store. It verifies repository, branch, commit, folder and analysis version, refuses stale snapshots, and permits explicitly labeled partial ones. Existing explicit analysis requests may refresh intelligence; context requests never do so. Restarts, eviction or requests reaching a different worker can require explicit analysis because Part 1 storage remains process-local. No durable context or member history is added.
+
+### Views and USER boundaries
+
+Project context includes the scoped inventory. Role/task/AI handoff views seed relevance from USER ownership/team scope, canonical semantic classifications and deterministic task-to-path/symbol/stage/requirement label matches. Relevance matches are INFERRED, never new architectural or feature facts. Unrecognized roles, unmatched scopes or absent task matches fall back to project context with UNKNOWN relevance and an explicit warning. Team scope is not ownership.
+
+Connected files are retained through canonical resolved imports, API callers, related types and data consumers. Closure is bidirectional so shared producers and downstream consumers are visible. This may produce a broad slice in tightly connected projects; it deliberately does not hide cross-boundary dependencies. Directory names alone do not classify a role. Arbitrary roles and duties remain USER statements. Selection does not infer ownership from commit history, tasks or classifications.
+
+Ownership accepts repository-relative file paths, directory prefixes and case-sensitive glob patterns. Backslashes in supplied scopes normalize to slashes. Do-not-touch takes precedence over overlapping ownership. Protected files remain readable in the briefing but are excluded from modification targets. A file must match an explicit ownership scope and no protection scope to become a modification target. Missing ownership says "Ownership configuration was not provided." This is guidance metadata, not a Git/file-write permission enforcement system; the context endpoint performs no writes to repositories.
+
+USER overrides show original classification, corrected value, reason and provenance. They can inform relevance without mutating the canonical observed classification. Project-wide identity, documented requirements, implementation statuses, rules, conflicts and unknowns stay shared across views.
+
+### Markdown structure
+
+1. Context Identity: exact snapshot identity, timestamps, version, view and USER boundaries.
+2. Context Completeness: retained collection counts, document/map/comparison coverage, critical omissions, impact and view relevance.
+3. Project Identity: categories, languages, tools, evidence and conservative maturity.
+4. Product / Project Purpose: quoted author intent, observed characterization and explicitly unknown semantic consistency.
+5. Source-of-Truth Documents: roles, authority, scope, important headings, requirement origins and commit/blob provenance.
+6. Requirements: every extracted requirement, source/priority, intent, canonical comparison/evidence/confidence/gaps and associated selected paths.
+7. Implementation Status: shared status counts and feature-by-feature documented-versus-observed comparison.
+8. Canonical Architecture: components, classified responsibilities, local import edges and recorded relationships.
+9. Component Map: important source symbols/lines, inputs/outputs, dependencies/dependents, API dependencies, parse status and ownership.
+10. Repository Structure: semantic paths, responsibilities/classifications, confidence, evidence and corrections.
+11. APIs and Shared Contracts: retained methods/routes, shapes/type references, callers, type fields and boundaries.
+12. Data Sources and Processing: categories, consumers, metadata-only artifacts and independently detected ML stages.
+13. Dependencies and Integration Constraints: manifest declarations and contracts to preserve.
+14. Configuration and Verification: environment names/purpose/required status, scripts, detected tests and verification limits.
+15. Deployment and Operational Constraints: observed configuration separate from documented deployment.
+16. Role, Duties, Ownership and Rules: USER duties/scopes, modification targets, protected cross-boundary files and scoped repository instructions.
+17. Developer Guidance and Next Work: USER task/constraints and investigations derived only from documented requirements/gaps.
+18. Conflicts, Risks and Unknowns: both claims/sources, recorded resolution, omissions and analysis/relevance limitations.
+19. Evidence, Confidence and Omissions: provenance, references, source omissions/reasons and files outside the selected view.
+20. AI Handoff Guidance: explicit task/boundary/evidence/integration/unknown-handling instructions for external coding agents.
+
+Coverage counts have explicit denominators and no invented completion percentages. A complete collection does not establish complete functionality. Document coverage means retained bodies; architecture coverage means classified directory-map entries, not verified runtime topology. Requirement coverage reflects recorded comparisons and uncertainty, not a new semantic reconciliation. PARTIAL snapshot status is preserved. Non-detected implementation remains NOT_DETECTED. Legacy NOT_STARTED/NOT_DETECTABLE/difference statuses receive conservative display labels while the original canonical status remains visible. Purpose equivalence is UNKNOWN; unrelated canonical conflicts are not falsely labeled purpose contradictions.
+
+### Budgets, omissions and safety
+
+The UTF-8 budget applies to rendered Markdown after redaction. Whole supporting records are removed in priority order. Identity, boundaries, shared contracts, rules, conflicts, uncertainty, source omissions and AI guidance are mandatory. Budget omissions identify section and record in Markdown and carry source paths/reason in the structured manifest. Snapshot collection omissions, view relevance exclusions and context budget exclusions are distinct categories. Omitted evidence is never described as complete. If mandatory content cannot fit, direct builder callers receive `usable:false` / INCOMPLETE; API requests for Markdown return 413.
+
+Request/server GitHub tokens and recognizable secret assignments are redacted from USER configuration as well as Markdown. HTML is escaped and text Markdown metacharacters are escaped to keep supplied text from forging briefing headings. Source paragraphs/rules are displayed as evidence, not executed instructions. No source imports, scripts, notebooks, model loads, LLM calls or deployments occur in this phase.
+
+### Small canonical extension and remaining limits
+
+Part 2 needed retained TypeScript property declarations for shared contracts. The Part 1 structural parser now retains simple flat interface/type properties, annotations and optional flags under `field_extraction:flat_declared_properties_only`. Nested/computed/generic/method shapes remain unknown; there is no compiler-level type resolution. Existing older snapshots without fields continue to show UNKNOWN until explicitly refreshed. The builder never parses raw source to fill this gap.
+
+Unrecorded signatures, request/response fields, business responsibilities, runtime control flow and test success stay UNKNOWN. File-level caller associations are explicitly distinguished from per-call bindings. Suggestions investigate recorded gaps; no normal-seeming product features are added. The prompt endpoint is unchanged. Role configuration is per request; no persistence UI, chatbot, retrieval system or Part 3 implementation is included.
+
+Validation: `python -B -m pytest -q -p no:cacheprovider`; see `PART2_VALIDATION_REPORT.md` for results and scope.
+
+
+## 27. Repository AI Workspace (Part 3)
+
+### Architecture and provider security
+
+Browser ? Baton backend ? configured Gemini endpoint. `AIProvider` is the small selection interface; `GeminiProvider` implements it with existing httpx, without a new SDK dependency. No provider existed before this phase. The adapter uses Google's documented `generateContent` REST interface, `systemInstruction` and JSON-schema selections. Official references: https://ai.google.dev/api/generate-content and https://ai.google.dev/gemini-api/docs/structured-output.
+
+`GEMINI_API_KEY` is a backend SecretStr, excluded from settings serialization/repr. `GEMINI_MODEL` must be supplied in the deployment environment and is validated as a model identifier. No model or credential is supplied by the browser. Authentication uses the `x-goog-api-key` header, never URL parameters or prompt text. Redirects are disabled; the provider host is fixed. Timeout (default 45 seconds), output tokens (default 2000), response size and four concurrent calls are bounded. Requests are not silently retried. Errors never include provider response bodies, headers or exception strings.
+
+`secret_values` extends existing redaction to configured provider/operator secrets. Collection and snapshot storage redact retained model strings/paths; context and workspace inputs/outputs are sanitized. `SafeJSONResponses` filters configured/request secrets from JSON responses across all API routes and limits buffered response size. Validation failures return a generic 422 instead of echoing input. Recognizable Gemini credentials are also redacted. This remains heuristic hygiene rather than a full secret-scanning product.
+
+Chat requires a configured `BATON_ACCESS_KEY` and matching `X-Baton-Key`, in addition to authorized GitHub snapshot loading. Existing endpoints retain optional operator authentication for compatibility. The browser operator key is entered in settings and held in memory; its previous public `VITE_BATON_ACCESS_KEY` binding has been removed. `X-GitHub-Token` remains request-scoped with server fallback. Both keys are excluded from browser persistence. No browser field, environment binding or API response exposes the provider key.
+
+### API contract
+
+All workspace routes use existing `ContextRequest` fields (owner/repo/branch/folder, optional expected commit, view, member, task, constraints and budget). Unknown additional fields are rejected. Defaults use `ai_handoff`; the UI chooses project/role/task based on its explicit scope. Server `AI_CONTEXT_BYTES` (default 120000) caps the requested context budget; the existing total context limit still applies. `include_markdown` is always enabled internally to require a usable briefing.
+
+| Endpoint | Additional input | Result |
+|---|---|---|
+| `POST /api/v1/workspace/inspect` | None | Identity, completeness, member/task, relevance, sections/evidence records, omissions, Markdown and provider-configured boolean |
+| `POST /api/v1/workspace/chat` | `message` (1?8000 chars), optional 32-hex `conversation_id` | Grounded/unknown/out_of_scope status, canonical answer excerpts, citations, bounded actions, identity/coverage/omissions, conversation ID/revision |
+| `POST /api/v1/workspace/artifacts` | `artifact_type` | Markdown content, safe filename, SHA256, identity, completeness and omissions |
+| `POST /api/v1/workspace/compare` | `compare_branch`, optional `compare_commit` | Two exact identities, coverage, inventory-only differences, changed/unknown blob paths, retained API contract differences and protected changes |
+
+Workspace consumers call Part 2 `ContextService`. They do not call analysis or raw GitHub file/tree collection. Part 2 section metadata now exposes included evidence records with stable per-view IDs, original text and source paths; no second context builder is introduced. Missing/stale/changed/wrong-scope snapshots return 409 and require explicit analysis. Each request authorizes current repository state. A supplied commit asserts current HEAD, not historical checkout support.
+
+### Strict chatbot semantics
+
+The provider selects IDs from supplied current context records and optional typed actions (`inspect`, `verify`, `resolve_conflict`). It cannot return free-form answers, invented features, arbitrary code, tool calls or external factual claims. Extra output fields, nonexistent evidence IDs, grounded answers without evidence, inconsistent statuses, and actions outside selected evidence/explicit ownership fail closed with 502. Protected sources can be quoted for understanding but cannot become action targets. Conflict actions require a retained conflict record.
+
+Baton renders factual answer content from the selected original context excerpts, retaining DOCUMENTED/OBSERVED/DERIVED/INFERRED/UNKNOWN labels. Model selection is a relevance judgment, not new truth: it can select an irrelevant record, but cannot author an unsupported factual assertion. Unknown and outside-scope responses use fixed explicit messages. General conversation, browsing, code execution and automatic repository modifications are not provider capabilities. Recommendations are bounded investigations and never executed changes.
+
+### Conversations, artifacts and comparison
+
+Conversation state is process-local, expires after one hour, holds at most 100 entries and 20 turns each, and stores sanitized questions plus evidence IDs/actions rather than full source answers. Random identifiers are bound with process-keyed HMAC to authorization, repository, branch, commit, folder, analysis identity, view and USER role/task/constraints. Changed bindings/expired state return 409. Optimistic revisions reject concurrent conflicting writes. No credentials are stored as conversation fields. Previous user questions are context data, not implementation evidence. The UI starts fresh on scope/auth/repository/branch/folder changes and preserves applied duties when only the branch changes.
+
+Artifacts: `context`, `handoff`, `prd`, `implementation_plan`, `review`, `prompt`. Context is the existing Markdown; other drafts select existing briefing sections and preserve identity, completeness, USER task/duties/boundaries, uncertainty and omissions. Coding prompts reuse the existing prompt formatter with the connected repository identity and require an explicit USER task. Artifact generation is deterministic and does not spend provider quota. PRD output is an evidence draft of documented intent, not invented requirements. Investigation plans are not generated patches or automatic implementation. No artifact database or server-side repository write is introduced.
+
+Branch comparison loads two independently authorized existing snapshots for the same repository/folder. It compares recorded blob SHAs and retained API declaration shapes/types. Missing SHAs remain unknown; inventory-only differences are not automatically called deleted/unimplemented. Protection scopes apply across the full compared inventories, even outside the selected relevance view. Results do not certify runtime compatibility, perform a Git merge, resolve conflicts, create branches, commit or open a PR.
+
+### Deployment and operation
+
+1. Configure `GEMINI_API_KEY`, `GEMINI_MODEL` (an available model supporting JSON-schema generateContent), and a private `BATON_ACCESS_KEY` in the backend deployment environment. Render declares these with `sync:false`, never values. Do not put secrets in VITE variables, repository files, logs or browser storage.
+2. Set frontend `VITE_BATON_API_URL` to the backend URL. Enter the Baton access key in workspace settings, and an appropriate GitHub token when connecting a private repository.
+3. Connect/select the repository and branch. Use **Refresh analysis** explicitly. Workspace inspection, chat, artifact and comparison requests thereafter consume the cached canonical snapshots.
+4. Add/select a developer in Team & Ownership. Apply optional task/protection/constraints in workspace scope settings. Analyze both branches explicitly before comparing them.
+
+Without provider configuration, artifacts/context/comparison still work with authorized snapshots; chat reports 503 instead of simulating an AI reply. Multiple workers, eviction and restarts can invalidate both snapshots and conversations; V1 has no durable/shared store. The stop button stops browser waiting; it does not promise cancellation of a billable upstream request. Live provider behavior/quota depends on deployment configuration and was not exercised without a key.
+
+Validation and preview details: `PART3_VALIDATION_REPORT.md`.

@@ -1,9 +1,5 @@
-from app.utils.text_utils import language_for
+"""Compatibility projection; no independent framework interpretation."""
 def analyze(files):
- names={x["path"] for x in files}; stack=[]
- if any(p.endswith((".tsx",".jsx")) for p in names): stack.append("React")
- if any(p.endswith(".ts") for p in names): stack.append("TypeScript")
- if any(p.endswith(".py") for p in names): stack.append("Python")
- if any(p.endswith("requirements.txt") for p in names): stack.append("Python dependencies")
- if any(p.endswith("package.json") for p in names): stack.append("Node.js")
- return {"detected":stack,"languages":sorted({language_for(p) for p in names if language_for(p)})}
+    from app.intelligence.pipeline import run
+    intelligence = run(files, {}, {}, [])
+    return {'detected': intelligence.stack_detected, 'languages': intelligence.stack_languages}

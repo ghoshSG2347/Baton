@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import type { TeamMember, WorkspaceSection, RepoValidation } from '@/types';
+import type { TeamMember, WorkspaceSection, RepoValidation, WorkspaceRequest } from '@/types';
+import { setBatonAccessKey as configureAccess } from '@/lib/api/batonApi';
+import { redactUserData } from '@/lib/utils/redaction';
 
 interface WorkspaceState {
   repoUrl: string;
@@ -9,6 +11,7 @@ interface WorkspaceState {
   members: TeamMember[];
   isDemoMode: boolean;
   githubToken: string;
+  batonAccessKey: string;
   activeSection: WorkspaceSection;
   firstRun: boolean;
   firstRunStep: number;
@@ -21,7 +24,7 @@ function loadState(): Partial<WorkspaceState> | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    return redactUserData(JSON.parse(raw), []) as Partial<WorkspaceState>;
   } catch {
     return null;
   }
@@ -29,9 +32,10 @@ function loadState(): Partial<WorkspaceState> | null {
 
 function saveState(state: WorkspaceState) {
   try {
-    const { githubToken, ...persistable } = state;
+    const { githubToken, batonAccessKey, ...persistable } = state;
     void githubToken;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
+    void batonAccessKey;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(redactUserData(persistable, [githubToken, batonAccessKey])));
   } catch {
     // ignore
   }
@@ -47,10 +51,17 @@ export function useWorkspaceState() {
   const [members, setMembers] = useState<TeamMember[]>(initial?.members || []);
   const [isDemoMode, setIsDemoMode] = useState(initial?.isDemoMode || false);
   const [githubToken, setGithubToken] = useState('');
-  const [activeSection, setActiveSection] = useState<WorkspaceSection>('overview');
+  const [batonAccessKey, setAccessKeyState] = useState('');
+  const setBatonAccessKey = useCallback((value: string) => { configureAccess(value); setAccessKeyState(value); }, []);
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>('ai');
   const [firstRun, setFirstRun] = useState(!initial?.repo);
   const [firstRunStep, setFirstRunStep] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
+  const [fileReference, setFileReference] = useState<{ request: WorkspaceRequest; path: string } | null>(null);
+  const openRepositoryFile = useCallback((request: WorkspaceRequest, path: string) => {
+    setFileReference({ request, path }); setActiveSection('repository');
+  }, []);
+  useEffect(() => { setFileReference(null); }, [repo, selectedBranch]);
 
   const state = useMemo<WorkspaceState>(() => ({
     repoUrl,
@@ -60,11 +71,13 @@ export function useWorkspaceState() {
     members,
     isDemoMode,
     githubToken,
+    batonAccessKey,
     activeSection,
     firstRun,
     firstRunStep,
     resetVersion,
-  }), [repoUrl, repo, selectedBranch, selectedFolder, members, isDemoMode, githubToken, activeSection, firstRun, firstRunStep, resetVersion]);
+  }), [repoUrl, repo, selectedBranch, selectedFolder, members, isDemoMode, githubToken, batonAccessKey, activeSection, firstRun, firstRunStep, resetVersion]);
+
 
   useEffect(() => {
     saveState(state);
@@ -85,11 +98,13 @@ export function useWorkspaceState() {
     setSelectedFolder('');
     setMembers([]);
     setIsDemoMode(false);
+    setGithubToken('');
+    setBatonAccessKey('');
     setFirstRun(true);
     setFirstRunStep(0);
     setResetVersion((version) => version + 1);
     localStorage.removeItem(STORAGE_KEY);
-  }, []);
+  }, [setBatonAccessKey]);
 
   // Clears all repository-specific state and persisted localStorage while
   // preserving the in-memory GitHub token so the user can immediately
@@ -120,12 +135,14 @@ export function useWorkspaceState() {
     removeMember,
     setIsDemoMode,
     setGithubToken,
+    setBatonAccessKey,
     setActiveSection,
     setFirstRun,
     setFirstRunStep,
     reset,
     changeRepository,
     resetVersion,
+    fileReference, openRepositoryFile,
   };
 }
 

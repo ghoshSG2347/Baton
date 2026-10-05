@@ -74,7 +74,7 @@ def classify(
     model_artifact_paths = [
         p for p in paths
         if p.endswith((".pt", ".pth", ".h5", ".pkl", ".onnx", ".pb", ".safetensors", ".ckpt"))
-        or any(kw in p for kw in ("model/", "models/", "checkpoint", "weights", "artifacts/"))
+
     ]
 
     has_training = _content_matches(
@@ -87,7 +87,7 @@ def classify(
     )
 
     if ml_techs or notebook_paths or (dataset_paths and has_training):
-        if has_training or model_artifact_paths:
+        if ml_techs or has_training or model_artifact_paths:
             _add(ProjectType.MACHINE_LEARNING, f"ML frameworks: {[t.name for t in ml_techs[:3]]}")
         elif dataset_paths:
             _add(ProjectType.DATA_SCIENCE, f"Dataset files detected: {dataset_paths[:3]}")
@@ -195,9 +195,10 @@ def classify(
     has_setup_py = any(p.endswith("setup.py") or p.endswith("pyproject.toml") for p in paths)
     has_no_main = not has_server_startup and not has_cli_commands and not frontend_techs
 
-    cargo_lib = _content_matches(contents, [r'\[lib\]'])
+    import re
+    cargo_lib = any(re.search(r'(?m)^\s*\[lib\]', text) for path, text in contents.items() if path.endswith('Cargo.toml'))
     go_pkg = _content_matches(contents, [r"^package\s+\w+"])
-    has_npm_lib = _content_matches(contents, [r'"main"\s*:'])
+    has_npm_lib = any(re.search(r'"(?:main|exports)"\s*:', text) for path, text in contents.items() if path.endswith('package.json'))
 
     if (has_init_py and has_setup_py and has_no_main) or cargo_lib or has_npm_lib:
         _add(ProjectType.LIBRARY_SDK, "Package/library indicators detected")
@@ -205,13 +206,7 @@ def classify(
     # ------------------------------------------------------------------
     # 7. Mobile
     # ------------------------------------------------------------------
-    has_mobile = (
-        "swift" in lang_names
-        or "kotlin" in lang_names
-        or "dart" in lang_names
-        or any(t.name == "React Native" for t in technologies)
-        or any("android" in p or "ios" in p or "flutter" in p for p in paths)
-    )
+    has_mobile = any(t.name in {'React Native', 'Flutter'} for t in technologies) or _content_matches(contents, [r'import SwiftUI|import UIKit|import android\.|package:flutter/'])
     if has_mobile:
         _add(ProjectType.MOBILE, "Mobile platform indicators detected")
 
@@ -224,6 +219,8 @@ def classify(
     )
     if has_desktop:
         _add(ProjectType.DESKTOP, "Desktop application indicators detected")
+    if _content_matches(contents, [r'\bimport pygame\b|\busing UnityEngine\b|#include\s+["<]GameFramework/|\bextends (?:Node2D|Node3D|CharacterBody2D)\b']):
+        _add(ProjectType.GAME, 'Game framework imports or engine base classes detected')
 
     # ------------------------------------------------------------------
     # 9. Embedded / IoT
@@ -296,7 +293,8 @@ def classify(
         frontend_techs or backend_techs or has_route_decl or has_server_startup
         or ml_techs or cli_techs or has_embedded or infra_techs
     )
-    has_only_docs = not has_implementation and bool(
+    code_languages = lang_names - {'markdown', 'restructuredtext', 'json', 'yaml', 'toml', 'xml', 'latex', 'dockerfile', 'makefile'}
+    has_only_docs = not code_languages and not has_implementation and bool(
         any(ds.role in {"PRD", "README", "SPECIFICATION", "ARCHITECTURE"} for ds in doc_sources)
     )
     if has_only_docs:
@@ -320,6 +318,8 @@ def classify(
     # ------------------------------------------------------------------
     # Resolve / finalize
     # ------------------------------------------------------------------
+    if any(p.endswith(('.sh', '.bash', '.ps1')) for p in paths) or ('python' in lang_names and not types):
+        _add(ProjectType.SCRIPTING, 'Script source files detected')
     if not types:
         result_types = [ProjectType.UNKNOWN]
         evidence.append("No strong project-type signals detected")
@@ -346,7 +346,8 @@ def classify(
 
 def _content_matches(contents: dict[str, str], patterns: list[str]) -> bool:
     import re
-    for text in contents.values():
+    from app.analyzers.code_structure_analyzer import code_contents
+    for text in code_contents(contents).values():
         for pattern in patterns:
             if re.search(pattern, text, re.I | re.MULTILINE):
                 return True

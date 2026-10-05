@@ -35,6 +35,8 @@ from typing import Optional
 
 from app.intelligence.models import (
     ArchitectureComponent,
+    EvidenceSource,
+    EvidenceStatus,
     Confidence,
     ContextCompleteness,
     DirectoryRole,
@@ -54,7 +56,9 @@ from app.analyzers import component_classifier
 from app.analyzers import dependency_analyzer
 from app.analyzers import data_source_analyzer
 from app.analyzers import requirement_extractor
-from app.analyzers import feature_reconciler
+from app.analyzers import feature_reconciler, code_structure_analyzer
+from app.intelligence.safety import sanitize_file, sensitive_path
+from app.utils.file_filters import IGNORED_DIRS, IGNORED_NAMES
 
 
 def run(
@@ -81,17 +85,33 @@ def run(
     commit = metadata.get("commit")
     generated = metadata.get("generated") or datetime.now(timezone.utc).isoformat()
     folder = metadata.get("folder", "")
+    inventory = files
+    files = [f for f in files if not any(p in IGNORED_DIRS for p in f['path'].split('/')) and f['path'].rsplit('/', 1)[-1] not in IGNORED_NAMES and not sensitive_path(f['path'])]
+
+    # Sanitize even callers that bypass GitHub collection (tests/import clients).
+    eligible_paths = {f['path'] for f in files if f.get('type') == 'blob'}
+    contents = {p: sanitize_file(p, t) for p, t in contents.items() if p in eligible_paths}
+    doc_sources = documentation_analyzer.analyze_documentation(files, contents)
+    blob_shas = {f['path']: f.get('sha') for f in files}
+    for document in doc_sources:
+        document.commit = commit
+        document.blob_sha = blob_shas.get(document.path)
+    repository_rules = documentation_analyzer.analyze_rules(files, contents)
+    implementation = code_structure_analyzer.implementation_contents(contents)
+    observed_contents = {p: implementation.get(p, t) for p, t in contents.items() if documentation_analyzer._classify_doc_path(p) is None}
+    parsed_files = code_structure_analyzer.analyze(observed_contents)
+    package_dependencies, package_scripts = code_structure_analyzer.manifests(observed_contents)
 
     # -----------------------------------------------------------------------
     # STEP 1 — Language detection
     # -----------------------------------------------------------------------
-    languages = language_analyzer.analyze(files, contents)
+    languages = language_analyzer.analyze(files, implementation)
     stack_languages = language_analyzer.to_stack_languages(languages)
 
     # -----------------------------------------------------------------------
     # STEP 2 — Technology detection
     # -----------------------------------------------------------------------
-    technologies = technology_analyzer.analyze(files, contents)
+    technologies = technology_analyzer.analyze(files, observed_contents)
 
     # Produce legacy stack.detected list
     stack_detected: list[str] = []
@@ -116,28 +136,26 @@ def run(
     # -----------------------------------------------------------------------
     # STEP 3 — Documentation / intent analysis
     # -----------------------------------------------------------------------
-    doc_sources = documentation_analyzer.analyze_documentation(files, contents)
-    repository_rules = documentation_analyzer.analyze_rules(files, contents)
     important_files = documentation_analyzer.find_important_files(files)
 
     # -----------------------------------------------------------------------
     # STEP 4 — Project-type classification
     # -----------------------------------------------------------------------
     project_types, type_evidence = project_type_analyzer.classify(
-        languages, technologies, files, contents, doc_sources
+        languages, technologies, files, observed_contents, doc_sources
     )
 
     # -----------------------------------------------------------------------
     # STEP 5 — Directory / component classification
     # -----------------------------------------------------------------------
-    directory_classifications = component_classifier.classify_directories(files, contents)
+    directory_classifications = component_classifier.classify_directories(files, implementation)
     stray_files = component_classifier.classify_root_files(files)
 
     # -----------------------------------------------------------------------
     # STEP 6 — API route + call analysis
     # -----------------------------------------------------------------------
-    api_routes = dependency_analyzer.analyze_routes(contents)
-    api_calls_found = dependency_analyzer.analyze_api_calls(contents)
+    api_routes = dependency_analyzer.analyze_routes(implementation)
+    api_calls_found = dependency_analyzer.analyze_api_calls(implementation)
     api_routes = dependency_analyzer.match_routes_to_calls(api_routes, api_calls_found)
 
     # Legacy formats
@@ -147,32 +165,27 @@ def run(
     # -----------------------------------------------------------------------
     # STEP 7 — Environment variables + types + handoffs
     # -----------------------------------------------------------------------
-    env_var_names = dependency_analyzer.analyze_env_variables(contents)
-    env_variables = [
-        EnvVariable(name=name, source_files=[]) for name in env_var_names
-    ]
-    # Try to infer purpose from .env.example or similar
+    env_variables = []
+    import re
     for path, text in contents.items():
-        if any(kw in path.lower() for kw in (".env.example", ".env.sample", ".env")):
-            for line in text.splitlines():
-                line = line.strip()
-                if line.startswith("#"):
-                    continue
-                m = __import__("re").match(r"^([A-Z][A-Z0-9_]+)\s*=", line)
-                if m:
-                    name = m.group(1)
-                    for ev in env_variables:
-                        if ev.name == name and not ev.source_files:
-                            ev.source_files.append(path)
-                            break
+        names = dependency_analyzer.analyze_env_variables({path: text})
+        if path.rsplit('/', 1)[-1].startswith('.env'):
+            names += re.findall(r'(?m)^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=', text)
+        for name in sorted(set(names)):
+            existing = next((ev for ev in env_variables if ev.name == name), None)
+            if existing:
+                existing.source_files.append(path)
+            else:
+                env_variables.append(EnvVariable(name=name, source_files=[path]))
+    env_var_names = sorted(ev.name for ev in env_variables)
 
-    important_types = dependency_analyzer.analyze_important_types(contents)
-    handoffs = dependency_analyzer.analyze_handoffs(contents)
+    important_types = dependency_analyzer.analyze_important_types(implementation)
+    handoffs = dependency_analyzer.analyze_handoffs(code_structure_analyzer.code_contents(contents))
 
     # -----------------------------------------------------------------------
     # STEP 8 — Data-source classification
     # -----------------------------------------------------------------------
-    data_sources = data_source_analyzer.analyze(files, contents)
+    data_sources = data_source_analyzer.analyze(files, implementation)
 
     # -----------------------------------------------------------------------
     # STEP 9 — Requirement extraction
@@ -184,10 +197,11 @@ def run(
     # -----------------------------------------------------------------------
     requirements, conflicts, observed_features, missing_work = feature_reconciler.reconcile(
         requirements=requirements,
-        contents=contents,
+        contents=implementation,
         api_endpoints=api_routes,
         api_calls=api_calls_found,
         directory_classifications=directory_classifications,
+        parsed_files=parsed_files,
     )
 
     # Detect documentation vs code conflicts
@@ -198,10 +212,19 @@ def run(
         directory_classifications=directory_classifications,
     )
     conflicts.extend(doc_conflicts)
+    conflicts.extend(dependency_analyzer.detect_api_conflicts(api_routes, api_calls_found))
+    for requirement in requirements:
+        matching = [c for c in doc_conflicts if c.source_a == requirement.source_document and c.claim_a in requirement.intent]
+        if matching:
+            requirement.status = ImplementationStatus.CONFLICTING
+            requirement.conflicts.extend(c.description for c in matching)
 
     # -----------------------------------------------------------------------
     # STEP 11 — Architecture component modeling
     # -----------------------------------------------------------------------
+    dependencies = dependency_analyzer.analyze_imports(implementation)
+    resolved_dependencies = dependency_analyzer.resolve_imports(implementation)
+    component_classifier.classify_shared(directory_classifications, resolved_dependencies)
     components = _build_components(
         directory_classifications,
         api_routes,
@@ -210,7 +233,8 @@ def run(
         languages,
     )
 
-    data_flows = _derive_data_flows(project_types, components, api_routes, api_calls_found)
+    data_flows = [f"{ep.source_file} <- {caller} via {ep.method} {ep.route}" for ep in api_routes for caller in ep.callers]
+    data_flows += [f"{ds.path} -> {consumer}" for ds in data_sources for consumer in ds.consumers]
 
     # -----------------------------------------------------------------------
     # STEP 12 — Deployment detection
@@ -240,13 +264,14 @@ def run(
     # -----------------------------------------------------------------------
     # STEP 15 — Context completeness
     # -----------------------------------------------------------------------
-    files_discovered = len([f for f in files if f.get("type") == "blob"])
-    files_analyzed = metadata.get("files_analyzed", len(contents))
+    files_discovered = len([f for f in inventory if f.get("type") == "blob"])
+    files_analyzed = len(contents)
+    skipped_paths = sorted(set(skipped_paths) | {f['path'] for f in inventory if f.get('type') == 'blob' and f['path'] not in contents})
     files_omitted = len(skipped_paths)
     files_summarized = files_discovered - files_analyzed - files_omitted
 
     completeness_status = "COMPLETE"
-    if files_omitted > 0 or files_analyzed < files_discovered:
+    if metadata.get("tree_truncated") or files_omitted > 0 or files_analyzed < files_discovered:
         completeness_status = "PARTIAL"
     if files_analyzed < files_discovered * 0.5:
         completeness_status = "MINIMAL"
@@ -256,10 +281,12 @@ def run(
         files_fully_analyzed=files_analyzed,
         files_summarized=max(0, files_summarized),
         files_omitted=files_omitted,
-        critical_files_omitted=0,   # future: track critical files specifically
+        critical_files_omitted=len(set(skipped_paths) & set(important_files)),
         omitted_paths=skipped_paths,
         impact="Low" if files_omitted == 0 else "Medium" if files_omitted < 10 else "High",
         status=completeness_status,
+        omission_reasons={p: metadata.get('omission_reasons', {}).get(p, 'not_collected') for p in skipped_paths},
+        tree_truncated=bool(metadata.get('tree_truncated')),
     )
 
     # -----------------------------------------------------------------------
@@ -294,11 +321,22 @@ def run(
         branch=branch,
         commit=commit,
         generated=generated,
-        snapshot_status=SnapshotStatus.CURRENT,
+        snapshot_status=SnapshotStatus.PARTIAL if completeness.status != 'COMPLETE' or not commit else SnapshotStatus.CURRENT,
+        repository_metadata={k: metadata.get(k) for k in ('owner', 'repo', 'branch', 'commit', 'folder', 'generated')},
+        parsed_files=parsed_files,
+        documentation_content={d.path: contents[d.path] for d in doc_sources if d.path in contents},
+        dependencies=dependencies,
+        resolved_dependencies=resolved_dependencies,
+        data_models=[{'source_file': p.path, **s} for p in parsed_files for s in p.symbols if s['kind'] in {'ClassDef', 'class', 'interface', 'type', 'struct', 'enum', 'table'}],
+        package_dependencies=package_dependencies,
+        package_scripts=package_scripts,
+        api_consumers=api_calls_found,
+        evidence=[EvidenceSource(file=p.path, symbol=s['name'], line=s['line'], category=EvidenceStatus.OBSERVED) for p in parsed_files for s in p.symbols],
         # Project
         project_types=project_types,
         project_type_evidence=type_evidence,
         project_summary=project_summary,
+        project_identity={'repository': f'{owner}/{repo}', 'documented_titles': [{'source_document': d.path, 'title': d.headings[0].lstrip('# ').strip(), 'category': EvidenceStatus.DOCUMENTED.value} for d in doc_sources if d.role in {'README', 'PRD'} and d.headings]},
         project_root=folder,
         # Documentation
         documentation_sources=doc_sources,
@@ -307,7 +345,7 @@ def run(
         languages=languages,
         technologies=technologies,
         # Structure
-        file_tree=[{"path": f["path"], "type": f.get("type"), "size": f.get("size")} for f in files],
+        file_tree=[{"path": f["path"], "type": f.get("type"), "size": f.get("size"), "sha": f.get("sha"), "mode": f.get("mode")} for f in inventory],
         directory_classifications=directory_classifications,
         # Architecture
         components=components,
@@ -317,12 +355,12 @@ def run(
         # Requirements
         requirements=requirements,
         observed_features=observed_features,
-        planned_features=[r.intent[:80] for r in requirements if r.status == ImplementationStatus.NOT_STARTED][:15],
+        planned_features=[r.intent for r in requirements if r.status in {ImplementationStatus.NOT_DETECTED, ImplementationStatus.UNKNOWN}],
         # Data
         data_sources=data_sources,
         # Config
         env_variables=env_variables,
-        config_files=list(set(config_files)),
+        config_files=sorted(set(config_files)),
         # Deployment
         observed_deployment=observed_deployment,
         planned_deployment=planned_deployment,
@@ -373,7 +411,7 @@ def _build_components(
     role_descriptions = {
         DirectoryRole.FRONTEND: "User interface and client-side application",
         DirectoryRole.BACKEND: "Server-side API, route handlers, and business logic",
-        DirectoryRole.ML_PIPELINE: "Machine learning pipeline: training, evaluation, inference",
+        DirectoryRole.ML_PIPELINE: "Machine learning code; detected stages are recorded per file",
         DirectoryRole.DATA_PROCESSING: "Data ingestion, transformation, and preprocessing",
         DirectoryRole.CLI: "Command-line interface and script entrypoints",
         DirectoryRole.SHARED: "Shared domain logic, types, and utilities",
@@ -404,45 +442,14 @@ def _build_components(
         components.append(ArchitectureComponent(
             name=role.value,
             role=role_descriptions.get(role, role.value),
-            paths=paths[:5],
+            paths=paths,
             responsibilities=responsibilities,
             dependencies=[],
             confidence=Confidence.MEDIUM,
-            evidence=[f"Directory classification: {paths[:3]}"],
+            evidence=[e for dc in directory_classifications if dc.role == role for e in dc.evidence],
         ))
 
     return components
-
-
-def _derive_data_flows(project_types, components, api_routes, api_calls) -> list[str]:
-    """Generate human-readable data flow descriptions."""
-    flows: list[str] = []
-
-    has_frontend = any(c.name == DirectoryRole.FRONTEND.value for c in components)
-    has_backend = any(c.name == DirectoryRole.BACKEND.value for c in components)
-    has_ml = any(c.name == DirectoryRole.ML_PIPELINE.value for c in components)
-    has_data = any(c.name == DirectoryRole.DATA_PROCESSING.value for c in components)
-
-    if has_frontend and has_backend:
-        if api_routes:
-            sample = api_routes[:3]
-            route_str = ", ".join(f"`{e.method} {e.route}`" for e in sample)
-            flows.append(f"User → Frontend → API ({route_str}) → Backend")
-        else:
-            flows.append("User → Frontend → Backend API")
-
-    if has_ml:
-        flows.append("Dataset → Preprocessing → Feature Engineering → Model Training → Evaluation → Model Artifact")
-        if has_backend:
-            flows.append("Model Artifact → Inference API → Client")
-
-    if has_data and not has_ml:
-        flows.append("Raw Data → Data Processing → Output / Storage")
-
-    if ProjectType.CLI in project_types:
-        flows.append("CLI Input → Parser → Domain Logic → Output")
-
-    return flows
 
 
 # ---------------------------------------------------------------------------
@@ -450,35 +457,31 @@ def _derive_data_flows(project_types, components, api_routes, api_calls) -> list
 # ---------------------------------------------------------------------------
 
 def _analyze_deployment(technologies, doc_sources, contents, files) -> tuple[list[str], list[str]]:
-    """Separate observed and planned deployment configurations."""
-    observed: list[str] = []
-    planned: list[str] = []
-
-    # Observed: based on detected deployment technologies
-    for tech in technologies:
-        if tech.category == "cloud" and tech.confidence in {Confidence.HIGH, Confidence.MEDIUM}:
-            observed.append(f"{tech.name} (evidence: {tech.evidence[0] if tech.evidence else 'detected'})")
-        elif tech.category == "containerization" and tech.name == "Docker":
-            observed.append("Docker containerization configured")
-
-    # Planned: from documentation (PRD, README mentions)
+    """Configuration presence and explicit deployment intent remain distinct."""
+    import re
+    platforms = {'dockerfile': 'Docker', 'docker-compose.yml': 'Docker',
+                 'docker-compose.yaml': 'Docker', 'render.yaml': 'Render',
+                 'vercel.json': 'Vercel', 'netlify.toml': 'Netlify',
+                 'fly.toml': 'Fly.io', 'railway.json': 'Railway'}
+    observed = []
+    for file in files:
+        path = file['path']
+        name = path.rsplit('/', 1)[-1].lower()
+        if file.get('type') == 'blob' and name in platforms:
+            observed.append(f"{platforms[name]} configuration present: {path} (deployment not verified)")
+        if '.github/workflows/' in path and path.endswith(('.yml', '.yaml')):
+            observed.append(f"GitHub Actions workflow present: {path} (execution not verified)")
+    planned = []
     for doc in doc_sources:
-        text = contents.get(doc.path, doc.raw_excerpt or "")
-        if not text:
-            continue
-        import re
-        for platform in ["Vercel", "Render", "Railway", "AWS", "GCP", "Azure", "Heroku",
-                         "Fly.io", "Netlify", "DigitalOcean", "Kubernetes", "Docker"]:
-            if re.search(rf"\b{platform}\b", text, re.I):
-                entry = f"{platform} (mentioned in `{doc.path}`)"
-                if entry not in observed and entry not in planned:
-                    planned.append(entry)
-
-    # Remove planned entries that are already observed
-    observed_platforms = {obs.split()[0].lower() for obs in observed}
-    planned = [p for p in planned if p.split()[0].lower() not in observed_platforms]
-
-    return observed, planned
+        for number, line in enumerate(contents.get(doc.path, '').splitlines(), 1):
+            if not re.search(r'\b(?:deploy|deployment|host|hosting)\b', line, re.I):
+                continue
+            if re.search(r'\b(?:not|never|no)\b', line, re.I):
+                continue
+            for platform in sorted(set(platforms.values()) | {'AWS', 'GCP', 'Azure', 'Kubernetes'}):
+                if re.search(re.escape(platform), line, re.I):
+                    planned.append(f"{platform}: documented deployment statement in {doc.path}:{number}")
+    return sorted(set(observed)), sorted(set(planned))
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +508,7 @@ def _analyze_tests(files, contents, directory_classifications) -> tuple[list[str
     if test_dirs:
         notes.append(f"Test directories: {', '.join(d.path for d in test_dirs[:3])}")
 
-    return test_files[:20], notes
+    return test_files, notes
 
 
 # ---------------------------------------------------------------------------
@@ -525,18 +528,6 @@ def _identify_risks(conflicts, missing_work, requirements, technologies) -> list
 
     if missing_work:
         risks.append(f"{len(missing_work)} documented requirement(s) have no observed implementation")
-
-    # Security risk: no auth detected if backend exists
-    has_backend = any(
-        t.name.lower() in {"fastapi", "flask", "django", "express", "nestjs"}
-        for t in technologies
-    )
-    has_auth = any(
-        t.name.lower() in {"jwt", "oauth", "auth0", "passport", "pyjwt"}
-        for t in technologies
-    )
-    if has_backend and not has_auth:
-        risks.append("Backend detected but no authentication library detected — verify auth is implemented")
 
     return risks
 

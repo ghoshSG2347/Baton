@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { GitBranch, File, ChevronRight, Loader2, Github, LogOut } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { TreeItem, RepoValidation } from '@/types';
@@ -20,6 +20,18 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   const [fileLoading, setFileLoading] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [treeLoading, setTreeLoading] = useState(false);
+  const [sourceLabel, setSourceLabel] = useState('');
+  useEffect(() => {
+    const reference = state.fileReference;
+    if (!reference) return;
+    let active = true;
+    setSelectedFile(null); setFileLoading(true); setError('');
+    batonApi.source({ ...reference.request, path: reference.path }, state.githubToken || undefined)
+      .then((result) => { if (active) { setSelectedFile(result); setSourceLabel(`Commit ${shortSha(result.identity.commit)} · lines ${result.start_line}–${result.end_line}${result.partial ? ' · partial source region' : ''}`); } })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : 'Source could not be loaded.'); })
+      .finally(() => { if (active) setFileLoading(false); });
+    return () => { active = false; };
+  }, [state.fileReference, state.githubToken]);
 
   const handleValidate = async () => {
     if (!urlInput.trim()) return;
@@ -81,6 +93,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   };
 
   const handleFileClick = async (path: string) => {
+    setSourceLabel('Current branch source');
     if (state.isDemoMode) {
       setSelectedFile({ path, content: DEMO_FILE_CONTENT });
       return;
@@ -137,6 +150,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       <SectionLabel className="mb-6">REPOSITORY</SectionLabel>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Repository</h1>
       <p className="text-sm text-baton-text-tertiary mb-8">Connect and inspect the GitHub repository.</p>
+      {error && <p role="alert" className="text-sm text-baton-warning mb-4">{error}</p>}
 
       {/* Connect form */}
       {!state.repo && validateState !== 'success' && (
@@ -307,6 +321,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
                   ) : selectedFile ? (
                     <div>
                       <div className="font-mono text-[11px] text-baton-accent mb-3">{selectedFile.path}</div>
+                      <p className="font-mono text-[10px] text-baton-text-tertiary mb-3">{sourceLabel}</p>
                       <pre className="font-mono text-[11px] text-baton-text-highlight leading-relaxed whitespace-pre-wrap">
                         {selectedFile.content}
                       </pre>

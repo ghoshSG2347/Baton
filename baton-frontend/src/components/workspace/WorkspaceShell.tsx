@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import {
   Activity, GitBranch, Users, BarChart3, FileText, Terminal,
-  Radar, GitMerge, RefreshCw, Settings, Menu, X, LogOut,
+  Radar, GitMerge, RefreshCw, Settings, Menu, X, LogOut, MessageSquare,
 } from 'lucide-react';
 import type { WorkspaceSection } from '@/types';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
@@ -22,6 +22,7 @@ const navSections: {
   {
     group: 'MISSION CONTROL',
     items: [
+      { id: 'ai', label: 'AI workspace', icon: MessageSquare },
       { id: 'overview', label: 'Overview', icon: Activity },
       { id: 'repository', label: 'Repository', icon: GitBranch },
       { id: 'team', label: 'Team & Ownership', icon: Users },
@@ -59,15 +60,24 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [clearDemoOpen]);
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setSidebarOpen(false); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [sidebarOpen]);
 
   return (
-    <div className="min-h-screen bg-baton-black text-baton-white flex flex-col">
+    <div className="baton-workspace h-dvh min-h-0 bg-baton-near-black text-baton-white flex flex-col">
       {/* Top bar */}
       <header className="flex-shrink-0 h-14 border-b border-baton-border bg-baton-near-black flex items-center justify-between px-4 lg:px-6 z-30 relative">
         {/* Left: logo + repo info */}
         <div className="flex items-center gap-4">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={sidebarOpen}
+            aria-controls="workspace-navigation"
             className="lg:hidden text-baton-text-secondary hover:text-baton-white"
           >
             {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
@@ -218,6 +228,13 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
           {settingsOpen && (
             <div className="absolute right-0 top-8 z-40 w-56 border border-baton-border bg-baton-near-black rounded-baton p-3 shadow-2xl">
               <MonoLabel className="block mb-3">WORKSPACE SETTINGS</MonoLabel>
+              <label className="block text-xs text-baton-text-highlight mb-4">
+                Baton access key
+                <input type="password" autoComplete="off" value={state.batonAccessKey}
+                  onChange={(event) => state.setBatonAccessKey(event.target.value)}
+                  className="mt-2 w-full rounded border border-baton-border bg-baton-layer-1 px-2 py-2 text-sm" />
+                <span className="mt-2 block text-[11px] text-baton-text-tertiary">Kept in memory. AI provider credentials are configured on the server.</span>
+              </label>
               <button
                 type="button"
                 onClick={() => {
@@ -236,7 +253,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Sidebar */}
         {sidebarOpen && (
           <div
@@ -246,9 +263,10 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
         )}
 
         <aside
+          id="workspace-navigation"
           className={cn(
-            'fixed lg:static w-60 flex-shrink-0 border-r border-baton-border bg-baton-near-black z-20 transition-transform duration-200',
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+            'fixed top-14 bottom-0 left-0 lg:static w-60 flex-shrink-0 border-r border-baton-border bg-baton-near-black z-20 transition-transform duration-200',
+            sidebarOpen ? 'translate-x-0 visible' : '-translate-x-full invisible lg:visible lg:translate-x-0'
           )}
         >
           <nav className="py-4 px-3 h-full overflow-y-auto flex flex-col">
@@ -323,13 +341,12 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
         </aside>
 
         {/* Main content */}
-        <main className="flex-1 overflow-y-auto bg-baton-black">
+        <main id="workspace-main" className="flex-1 min-w-0 overflow-y-auto bg-baton-near-black">
           <motion.div
-            key={state.activeSection}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
-            className="min-h-full"
+            className={state.activeSection === 'ai' ? 'h-full' : 'min-h-full'}
           >
             {children}
           </motion.div>

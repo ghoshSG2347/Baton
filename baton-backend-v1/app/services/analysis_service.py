@@ -1,144 +1,93 @@
-"""
-Updated Analysis Service — snapshot-aware intelligence pipeline.
-
-Changes from v1:
-  1. Checks snapshot cache before re-analyzing
-  2. Detects stale snapshots (repository changed since last analysis)
-  3. Runs the intelligence pipeline instead of the old RepositoryAnalyzer
-  4. Returns both the RepositoryIntelligence AND backward-compatible analysis dict
-  5. Preserves all existing API response shapes for frontend compatibility
-
-Token security:
-  - GitHub tokens are NEVER stored in the snapshot
-  - Tokens are used ephemerally for this request only
-"""
-
-from __future__ import annotations
-
+"""Authorized, commit-pinned collection feeding the single canonical pipeline."""
 from datetime import datetime, timezone
-
 from app.core.config import get_settings
+from app.core.exceptions import BatonError
+from app.core.secrets import secret_values
 from app.services.github_service import GitHubService
 from app.utils.file_filters import is_relevant
-from app.intelligence import pipeline as intel_pipeline
-from app.intelligence import snapshot as snap
-
+from app.intelligence import pipeline, snapshot
+from app.intelligence.safety import sensitive_path, sanitize_file, sanitize_model
+from app.analyzers.documentation_analyzer import _classify_doc_path
 
 class AnalysisService:
-    def __init__(self, token: str | None = None):
+    def __init__(self, token=None, store=None):
         self.github = GitHubService(token)
-        # Token is NOT stored in any snapshot — only used for this request
+        self.store = store or snapshot._DEFAULT
 
-    async def analyze(
-        self,
-        owner: str,
-        repo: str,
-        branch: str,
-        folder: str = "",
-    ) -> dict:
-        """
-        Analyze a repository and return backward-compatible analysis dict.
-        Uses snapshot cache when the same commit has already been analyzed.
+    async def analyze(self, owner, repo, branch, folder=""):
+        return (await self.analyze_intelligence(owner, repo, branch, folder)).to_legacy_analysis()
 
-        Returns the legacy analysis dict format (for backward compat with
-        existing API endpoints and tests).
-        """
-        intelligence = await self.analyze_intelligence(owner, repo, branch, folder)
-        return intelligence.to_legacy_analysis()
-
-    async def analyze_intelligence(
-        self,
-        owner: str,
-        repo: str,
-        branch: str,
-        folder: str = "",
-    ) -> "RepositoryIntelligence":  # type: ignore[name-defined]
-        """
-        Analyze a repository and return the full RepositoryIntelligence model.
-        Snapshot-aware: returns cached result if commit matches.
-        """
-        from app.intelligence.models import RepositoryIntelligence
-
+    async def analyze_intelligence(self, owner, repo, branch, folder=""):
         settings = get_settings()
-
-        # --- Fetch repository tree to get current commit ---
-        tree_snapshot = await self.github.tree_snapshot(owner, repo, branch)
-        current_commit = tree_snapshot.get("sha")
-
-        # --- Snapshot lookup ---
-        cached = snap.lookup(owner, repo, branch, current_commit)
+        if not branch:
+            repository = await self.github.repository(owner, repo)
+            branch = repository.get('default_branch') or 'HEAD'
+        # Resolve and authorize on EVERY request, including cache hits. Tree SHA
+        # is not commit SHA; pin all subsequent reads to this resolved commit.
+        try:
+            state = await self.github.commit(owner, repo, branch)
+        except BatonError as exc:
+            if exc.status_code != 409:
+                raise
+            # GitHub returns 409 for repositories without commits. No reusable
+            # exact-state snapshot can exist yet.
+            return pipeline.run([], {}, dict(owner=owner, repo=repo, branch=branch,
+                                commit=None, folder=folder.strip('/'),
+                                analysis_warnings=['Repository has no resolvable commit; snapshot is not cached.']), [])
+        commit = state.get('sha')
+        if not commit:
+            raise BatonError('GitHub did not return an exact commit', 502)
+        folder = folder.strip('/')
+        cached = self.store.load(owner, repo, branch, commit, folder)
         if cached is not None:
-            return cached
-
-        # --- Stale detection ---
-        is_stale = snap.is_stale(owner, repo, branch, current_commit)
-        if is_stale:
-            stale = snap.get_stale_snapshot(owner, repo, branch)
-            # We'll proceed to re-analyze and replace the stale snapshot
-            # (stale variable used only for logging/warnings below)
-
-        # --- Collect files ---
-        all_items = tree_snapshot.get("tree", [])
-        prefix = folder.strip("/")
-        items = [
-            x for x in all_items
-            if (not prefix or x.get("path", "") == prefix
-                or x.get("path", "").startswith(prefix + "/"))
-            and x.get("type") in {"blob", "tree"}
-            and is_relevant(x.get("path", ""))
-        ]
-        blobs = [
-            {"path": x["path"], "type": x["type"], "size": x.get("size")}
-            for x in items
-        ]
-
-        # --- Load file contents (bounded) ---
-        contents: dict[str, str] = {}
-        count = 0
-        skipped: list[str] = []
-
-        for x in items:
-            if x.get("type") != "blob":
+            return sanitize_model(cached, secret_values(self.github.token))
+        stale = any(x['owner'].lower() == owner.lower() and x['repo'].lower() == repo.lower() and x['branch'] == branch and x['folder'] == folder and x['commit'] != commit for x in self.store.metadata())
+        tree = await self.github.tree_snapshot(owner, repo, commit)
+        items = [x for x in tree.get('tree', []) if not folder or x.get('path') == folder or x.get('path', '').startswith(folder + '/')]
+        contents, omissions = {}, {}
+        total_bytes, attempts = 0, 0
+        # Discover intent first, followed by manifests/config, then remaining code.
+        def priority(x):
+            path = x.get('path', '')
+            if _classify_doc_path(path): return (0, path)
+            if path.endswith(('package.json', '.toml', 'requirements.txt', '.env.example')): return (1, path)
+            return (2, path)
+        for item in sorted(items, key=priority):
+            if item.get('type') != 'blob':
                 continue
-            if count >= settings.max_files_per_analysis:
-                skipped.append(x["path"])
+            path = item['path']
+            reason = None
+            if sensitive_path(path): reason = 'sensitive_file'
+            elif not is_relevant(path): reason = 'filtered_or_binary'
+            elif (item.get('size') or 0) > settings.max_file_size_bytes: reason = 'file_size_limit'
+            elif attempts >= settings.max_files_per_analysis: reason = 'file_count_limit'
+            elif total_bytes + (item.get('size') or 0) > settings.max_total_context_bytes: reason = 'total_byte_limit'
+            if reason:
+                omissions[path] = reason
                 continue
-            if x.get("size", 0) > settings.max_file_size_bytes:
-                skipped.append(x["path"])
-                continue
+            attempts += 1
             try:
-                file_data = await self.github.file(owner, repo, branch, x["path"])
-                contents[x["path"]] = file_data["content"]
-                count += 1
-            except Exception:
-                skipped.append(x["path"])
-
-        # --- Build metadata ---
-        metadata = {
-            "owner": owner,
-            "repo": repo,
-            "branch": branch,
-            "folder": folder,
-            "commit": current_commit,
-            "generated": datetime.now(timezone.utc).isoformat(),
-            "files_analyzed": count,
-            "analysis_warnings": [],
-        }
-
-        if is_stale:
-            metadata["analysis_warnings"].append(
-                "Repository has changed since the previous analysis snapshot."
-            )
-
-        # --- Run intelligence pipeline ---
-        intelligence = intel_pipeline.run(
-            files=blobs,
-            contents=contents,
-            metadata=metadata,
-            skipped_paths=skipped,
-        )
-
-        # --- Store in snapshot cache (NO token stored) ---
-        snap.store(intelligence)
-
+                data = await self.github.file(owner, repo, commit, path)
+                text = data['content']
+                size = len(text.encode('utf-8'))
+                if size > settings.max_file_size_bytes:
+                    omissions[path] = 'file_size_limit'
+                elif total_bytes + size > settings.max_total_context_bytes:
+                    omissions[path] = 'total_byte_limit'
+                else:
+                    total_bytes += size
+                    contents[path] = sanitize_file(path, text, secret_values(self.github.token))
+            except BatonError as exc:
+                if exc.status_code in {401, 403, 429}:
+                    raise  # never cache an authorization/rate-limit failure
+                omissions[path] = 'unreadable_file'
+        warnings = []
+        if stale: warnings.append('Repository has changed since the previous analysis snapshot.')
+        if tree.get('truncated'): warnings.append('GitHub returned a truncated tree; inventory is incomplete.')
+        metadata = dict(owner=owner, repo=repo, branch=branch, folder=folder, commit=commit,
+                        generated=datetime.now(timezone.utc).isoformat(), files_analyzed=len(contents),
+                        analysis_warnings=warnings, omission_reasons=omissions, tree_truncated=bool(tree.get('truncated')))
+        intelligence = pipeline.run(items, contents, metadata, list(omissions))
+        intelligence = sanitize_model(intelligence, secret_values(self.github.token))
+        self.store.save(intelligence)
         return intelligence

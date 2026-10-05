@@ -297,7 +297,7 @@ State is managed by the custom hook `useWorkspaceState` (`src/hooks/useWorkspace
 | `members` | `TeamMember[]` | `[]` | **YES** | Team member ownership list |
 | `isDemoMode` | `boolean` | `false` | **YES** | Flag determining whether mock fixtures or live API calls are used |
 | `githubToken` | `string` | `""` | **NO** (explicitly stripped) | Personal access token (kept in-memory for security) |
-| `activeSection` | `WorkspaceSection` | `'overview'` | **YES** | Active sidebar navigation section ID |
+| `activeSection` | `WorkspaceSection` | `'ai'` | **YES** | Active sidebar navigation section ID |
 | `firstRun` | `boolean` | `true` (if no repo) | **YES** | First-run onboarding indicator |
 | `firstRunStep` | `number` | `0` | **YES** | Onboarding step index |
 | `resetVersion` | `number` | `0` | **NO** | Re-render key for cleanly re-mounting workspace components |
@@ -444,7 +444,7 @@ The frontend provides two distinct reset mechanisms:
 | `WorkspaceShell` | Button | `Overview` (`Activity`) | Go to overview | Calls `state.setActiveSection('overview')` | None | `activeSection = 'overview'` |
 | `WorkspaceShell` | Button | `Settings` (`Settings`)| Open settings menu | Toggles `settingsOpen` | None | Local state |
 | `WorkspaceShell` | Button | `Reset local workspace`| Reset workspace | Calls `state.reset()` | None | State wiped, version bumped |
-| `WorkspaceShell` | Sidebar Items | 8 Nav buttons | Switch active view | Calls `state.setActiveSection(id)` | None | `activeSection = id` |
+| `WorkspaceShell` | Sidebar Items | 9 Nav buttons | Switch active view | Calls `state.setActiveSection(id)` | None | `activeSection = id` |
 | `Overview` | Button | `CONNECT REPOSITORY` | Go to repo section | Calls `onConnectRepo` | None | `activeSection = 'repository'` |
 | `Repository` | Button | `VALIDATE REPOSITORY` | Validate GitHub URL | Validates repo and loads branches | `POST /api/v1/github/validate-repository`<br>`GET /api/v1/github/branches` | Sets `state.repo`, `state.repoUrl` |
 | `Repository` | Button List | Branch rows | Select active branch | Fetches branch file tree | `GET /api/v1/github/tree` | Sets `state.selectedBranch` |
@@ -637,3 +637,36 @@ Any AI coding assistant modifying the Baton repository must strictly follow thes
 6. **No Token Persistence**: Never store GitHub Personal Access Tokens in `localStorage`. Keep tokens strictly in-memory during active sessions.
 7. **Smallest Necessary Surface**: Patch only the specific component or hook required for the task. Do not perform wholesale refactors.
 8. **Verify Before Declaring Complete**: Always run TypeScript typechecks (`npm run typecheck` or `tsc --noEmit`) before completing frontend tasks.
+
+
+## 17. Part 3 ? Repository AI Workspace
+
+This section supersedes earlier descriptions of the initial workspace view, provider behavior and credential persistence. Existing landing, repository, team, analysis, context, prompt, conflict and integration screens remain available. The default workspace section is now `ai`, loaded lazily to keep the initial bundle smaller.
+
+### Interface
+
+`AIWorkspace.tsx` extends the existing React/TypeScript/Tailwind 3 stack. Its local stylesheet uses quiet charcoal/green surfaces, Geist typography, a central conversation, a restrained context bar and an optional right evidence/artifact/branch panel. No framework migration was made. The existing landing cursor remains confined to the landing page; workspace interaction uses the native cursor. Branded favicon/description replace starter placeholders.
+
+The conversation supports multi-turn questions, canonical Markdown evidence, source references, typed investigation actions, copy/export, new chat, and stop-waiting behavior. Suggestions use actual snapshot availability and do not create demo AI replies. Shift+Enter adds a newline; Enter submits. React Markdown skips raw HTML, suppresses repository-supplied images and renders links as text, avoiding automatic remote content or executable markup.
+
+The evidence panel shows exact repository/branch/commit, analysis timestamp, collection counts, completeness and all omission categories. Ownership/protection/cross-boundary files are reviewable. Artifact types include repository context, developer handoff, PRD evidence draft, implementation plan, review briefing and coding prompt. Preview supports copy/download, focus trapping and Escape; artifacts remain associated with their snapshot identity. Branch review shows inventory/blob/contract differences and protected changes and can export the comparison. Source/hash unknowns remain explicit.
+
+### Scope and state safety
+
+The current branch dropdown uses GitHub branch names; each request includes repository/folder and the inspected commit where appropriate. Team selection maps name/role/job/folders/do_not_touch/team_scope into the existing backend MemberContext. Team creation now exposes protection and team scopes. Additional task/constraints/protection are explicitly applied in scope settings; editing a draft does not trigger a request on each keystroke. Ownership is never inferred from membership alone: only supplied folders establish candidate modification scope.
+
+Branch/folder/auth/applied-scope changes clear conversation IDs, messages, artifacts and comparison output and load a new authorized briefing. Applied role/duties remain when changing only the branch; changing repository resets the component. Async epoch checks prevent old responses from crossing scope changes. Stop aborts browser waiting and clears the conversation handle; server cancellation/quota refund is not promised. Conversations/artifacts are kept in component memory, not localStorage/sessionStorage; navigating away or reloading starts fresh client state. Server conversation storage is separately bounded and transient.
+
+`useWorkspaceState` stores repository/team configuration in `baton-workspace-state`. It strips both `githubToken` and `batonAccessKey` and redacts recognizable credentials/user strings before persistence. Neither credential is restored from storage. The operator access setter updates the in-memory API client before requests resume, so there is no stale-key request race. Full reset clears both memory credentials; repository changes preserve the current GitHub token as before. The public Vite operator-key binding has been removed. Only `VITE_BATON_API_URL` is frontend configuration; provider credentials belong solely to the backend. API error details are no longer printed to the console.
+
+### Availability and states
+
+AI workspace requires an actual authorized snapshot and deliberately does not use the legacy demo fixture as live AI evidence. No repository shows a connect action. Missing/stale snapshots show the explicit refresh-required message. **Refresh analysis** is the only workspace action invoking repository/folder analysis. Provider-unconfigured state disables sending and explains that context/artifact/branch tools remain available. Provider/auth/quota/invalid-evidence errors are inline and retryable by the user; no response is fabricated. Small context budgets are rejected rather than treated as complete.
+
+Mobile navigation is hidden/inaccessible while closed, opens from a labeled button, closes with Escape, and has a backdrop. The evidence panel can be hidden to prioritize the composer. Controls have keyboard focus states, long evidence paths wrap, and reduced-motion preferences are respected.
+
+### API and validation
+
+`batonApi` adds `/api/v1/workspace/inspect`, `/chat`, `/artifacts`, `/compare` with typed WorkspaceRequest/inspection/chat/artifact/comparison responses. The browser communicates only with Baton. No provider SDK, endpoint or provider credential binding exists in frontend source. The sole new UI dependency is `react-markdown` 10.
+
+Run `npm.cmd run typecheck`, `npm.cmd run lint`, and `npm.cmd run build`. Browser regression checks are in `tests/workspace.e2e.cjs`. First generate fixture responses from the backend using `python -B -m tests.export_workspace_fixtures`, start a local Vite preview, and run the browser script with Playwright installed or `BATON_PLAYWRIGHT_PATH` pointing to the bundled package and `BATON_BROWSER_PATH` to a browser executable. Optional `BATON_PREVIEW_URL` changes the preview URL. Fixture/provider responses are test-only network mocks produced through the actual canonical/context/workspace services; production has no mock AI fallback. Screenshots and fixture JSON live in ignored `.test-output`, not repository source.

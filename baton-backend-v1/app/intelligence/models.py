@@ -44,6 +44,7 @@ class EvidenceStatus(str, Enum):
 
 
 class ImplementationStatus(str, Enum):
+    NOT_DETECTED = "NOT_DETECTED"
     NOT_STARTED = "NOT_STARTED"
     PARTIALLY_IMPLEMENTED = "PARTIALLY_IMPLEMENTED"
     IMPLEMENTED = "IMPLEMENTED"
@@ -54,6 +55,7 @@ class ImplementationStatus(str, Enum):
 
 
 class ProjectType(str, Enum):
+    SCRIPTING = "Scripting"
     WEB_APPLICATION = "Web Application"
     FRONTEND = "Frontend Application"
     BACKEND_API = "Backend / API"
@@ -110,6 +112,8 @@ class EvidenceSource:
     file: str
     symbol: Optional[str] = None
     note: Optional[str] = None
+    line: Optional[int] = None
+    category: EvidenceStatus = EvidenceStatus.OBSERVED
 
 
 @dataclass
@@ -139,6 +143,8 @@ class DirectoryClassification:
     # Future: user override layer preserving provenance
     user_override: Optional[str] = None
     observed_role: Optional[str] = None  # always the auto-detected role
+    override_source: Optional[str] = None
+    category: EvidenceStatus = EvidenceStatus.INFERRED
 
 
 @dataclass
@@ -148,6 +154,8 @@ class DocumentationSource:
     role: str          # "PRD", "README", "ARCHITECTURE", "AGENTS", "RULES", "CONTRIBUTING", etc.
     headings: list[str] = field(default_factory=list)
     raw_excerpt: Optional[str] = None   # first 2000 chars only — never full file
+    commit: Optional[str] = None
+    blob_sha: Optional[str] = None
 
 
 @dataclass
@@ -169,6 +177,11 @@ class ApiEndpoint:
     evidence: list[str] = field(default_factory=list)
     request_shape: Optional[str] = None
     response_shape: Optional[str] = None
+    handler: Optional[str] = None
+    related_types: list[str] = field(default_factory=list)
+    confidence: Confidence = Confidence.MEDIUM
+    category: EvidenceStatus = EvidenceStatus.OBSERVED
+    external: bool = False
 
 
 @dataclass
@@ -187,6 +200,9 @@ class Requirement:
     conflicts: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     confidence: Confidence = Confidence.LOW
+    category: EvidenceStatus = EvidenceStatus.DOCUMENTED
+    priority: Optional[str] = None
+    source_line: Optional[int] = None
 
 
 @dataclass
@@ -198,6 +214,7 @@ class ArchitectureComponent:
     dependencies: list[str] = field(default_factory=list)
     confidence: Confidence = Confidence.MEDIUM
     evidence: list[str] = field(default_factory=list)
+    category: EvidenceStatus = EvidenceStatus.DERIVED
 
 
 @dataclass
@@ -215,7 +232,7 @@ class DataSource:
 class EnvVariable:
     name: str
     purpose: Optional[str] = None
-    required: bool = False
+    required: Optional[bool] = None
     source_files: list[str] = field(default_factory=list)
 
 
@@ -243,6 +260,28 @@ class ContextCompleteness:
     omitted_paths: list[str] = field(default_factory=list)
     impact: str = "Unknown"
     status: str = "UNKNOWN"    # COMPLETE, PARTIAL, MINIMAL
+    omission_reasons: dict[str, str] = field(default_factory=dict)
+    tree_truncated: bool = False
+
+
+@dataclass
+class FileStructure:
+    path: str
+    symbols: list[dict] = field(default_factory=list)
+    imports: list[str] = field(default_factory=list)
+    entrypoints: list[str] = field(default_factory=list)
+    parse_status: str = "UNKNOWN"
+    semantic_roles: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UserOverride:
+    target: str
+    field: str
+    original_value: str
+    value: str
+    source: str = "USER"
+    reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -267,11 +306,24 @@ class RepositoryIntelligence:
     commit: Optional[str]
     generated: str
     snapshot_status: SnapshotStatus = SnapshotStatus.CURRENT
+    analysis_version: str = "1.1"
+    repository_metadata: dict = field(default_factory=dict)
+    parsed_files: list[FileStructure] = field(default_factory=list)
+    documentation_content: dict[str, str] = field(default_factory=dict)
+    dependencies: dict[str, list[str]] = field(default_factory=dict)
+    resolved_dependencies: dict[str, list[str]] = field(default_factory=dict)
+    data_models: list[dict] = field(default_factory=list)
+    package_dependencies: list[dict] = field(default_factory=list)
+    package_scripts: dict[str, dict[str, str]] = field(default_factory=dict)
+    api_consumers: list[ApiEndpoint] = field(default_factory=list)
+    evidence: list[EvidenceSource] = field(default_factory=list)
+    user_overrides: list[UserOverride] = field(default_factory=list)
 
     # --- Project identity ---
     project_types: list[ProjectType] = field(default_factory=list)
     project_type_evidence: list[str] = field(default_factory=list)
     project_summary: Optional[str] = None   # evidence-based description
+    project_identity: dict = field(default_factory=dict)
     project_root: str = ""
 
     # --- Source-of-truth documents ---
@@ -344,7 +396,12 @@ class RepositoryIntelligence:
         RepositoryAnalyzer output shape. Used so existing API endpoints
         and frontend consumers continue to work unchanged.
         """
+        from dataclasses import asdict
         return {
+            "canonical_api": {
+                "endpoints": [asdict(endpoint) for endpoint in self.api_endpoints],
+                "consumers": [asdict(consumer) for consumer in self.api_consumers],
+            },
             "metadata": {
                 "owner": self.owner,
                 "repo": self.repo,

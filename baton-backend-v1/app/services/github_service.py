@@ -1,5 +1,6 @@
 import re, base64
 import httpx
+from urllib.parse import quote
 from app.core.config import get_settings
 from app.core.exceptions import BatonError
 from app.utils.text_utils import language_for
@@ -16,8 +17,8 @@ class GitHubService:
         if self.token: headers["Authorization"]=f"Bearer {self.token}"
         try:
             async with httpx.AsyncClient(base_url="https://api.github.com", timeout=20) as c: r=await c.request(method,path,headers=headers,**kwargs)
-        except httpx.HTTPError as e: raise BatonError(f"GitHub request failed: {e}",502)
-        if r.status_code>=400: raise BatonError(r.json().get("message","GitHub request failed") if r.headers.get("content-type","" ).startswith("application/json") else "GitHub request failed", r.status_code)
+        except httpx.HTTPError: raise BatonError("GitHub request failed",502)
+        if r.status_code>=400: raise BatonError("GitHub request failed", r.status_code)
         return r.json()
     @staticmethod
     def validate_repo_url(url:str)->tuple[str,str]:
@@ -35,7 +36,9 @@ class GitHubService:
         return [x for x in data.get("tree",[]) if not prefix or x.get("path","")==prefix or x.get("path","").startswith(prefix+"/")]
     async def tree_snapshot(self,owner,repo,branch):
         ref=branch or "HEAD"
-        return await self.request("GET",f"/repos/{owner}/{repo}/git/trees/{ref}",params={"recursive":"1"})
+        return await self.request("GET",f"/repos/{owner}/{repo}/git/trees/{quote(ref, safe='')}",params={"recursive":"1"})
+    async def commit(self,owner,repo,branch):
+        return await self.request("GET",f"/repos/{owner}/{repo}/commits/{quote(branch or 'HEAD', safe='')}")
     async def file(self,owner,repo,branch,path):
         data=await self.request("GET",f"/repos/{owner}/{repo}/contents/{path.lstrip('/')}",params={"ref":branch})
         if isinstance(data,list) or data.get("type")!="file": raise BatonError("Requested path is not a file")

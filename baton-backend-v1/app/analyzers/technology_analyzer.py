@@ -86,7 +86,6 @@ _TECH_DEFINITIONS: list[tuple[str, str, list[tuple[str, str]]]] = [
     ("Express", "framework", [
         ("pkg_json_dep", "express"),
         ("file_content", r"require\(['\"]express['\"]|from ['\"]express['\"]"),
-        ("file_content", r"(?:app|router)\.(?:get|post|put|patch|delete)\s*\("),
     ]),
     ("Fastify", "framework", [
         ("pkg_json_dep", "fastify"),
@@ -523,25 +522,8 @@ def _is_nested_pkg(path: str) -> bool:
 
 
 def _extract_python_deps(paths: set[str], contents: dict[str, str]) -> set[str]:
-    deps: set[str] = set()
-    for path, text in contents.items():
-        if path.endswith("requirements.txt"):
-            for line in text.splitlines():
-                line = re.sub(r"[><=!#\s].*", "", line.strip()).lower()
-                if line:
-                    deps.add(line)
-        elif path.endswith(("pyproject.toml", "setup.py", "setup.cfg", "Pipfile")):
-            # Extract package names with a simple pattern
-            for m in re.findall(r"""['"]([\w\-]+)['"]\s*(?:[><=!]|,|$)""", text):
-                deps.add(m.lower())
-            # Also capture simple word tokens in dependencies sections
-            for line in text.splitlines():
-                if re.search(r"dependencies|requires|install_requires", line, re.I):
-                    continue
-                m = re.match(r'^\s*["\']?([\w][\w\-]+)["\']?\s*(?:[><=!,\[]|$)', line)
-                if m:
-                    deps.add(m.group(1).lower())
-    return deps
+    from app.analyzers.code_structure_analyzer import manifests
+    return {re.split(r'[\s\[<>=!~;]', d['name'])[0].lower() for d in manifests(contents)[0] if d['source_file'].endswith(('requirements.txt', 'pyproject.toml'))}
 
 
 def _file_exists_anywhere(filename_lower: str, filenames: set[str], paths: set[str]) -> bool:

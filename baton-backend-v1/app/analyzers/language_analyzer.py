@@ -24,6 +24,7 @@ from app.intelligence.models import Confidence, DetectedLanguage
 # ---------------------------------------------------------------------------
 
 EXT_TO_LANGUAGE: dict[str, str] = {
+    "gd": "GDScript",
     "py": "Python",
     "pyx": "Python",
     "pyi": "Python",
@@ -193,6 +194,8 @@ def analyze(files: list[dict], contents: dict[str, str]) -> list[DetectedLanguag
     import_evidence: dict[str, list[str]] = {}
     for path, text in contents.items():
         for lang, patterns in IMPORT_PATTERNS.items():
+            if EXT_TO_LANGUAGE.get(_ext(path)) != lang:
+                continue
             if any(re.search(p, text, re.MULTILINE) for p in patterns):
                 import_evidence.setdefault(lang, []).append(path)
 

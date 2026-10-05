@@ -23,6 +23,7 @@ Backward compatibility:
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 from typing import Optional
 
 from app.intelligence.models import ApiEndpoint, Confidence
@@ -59,7 +60,7 @@ _CALL_PATTERNS: list[tuple[str, Optional[int], int]] = [
     # httpx / requests (Python clients)
     (r'(?:httpx|requests)\.(?P<method>get|post|put|patch|delete)\s*\(\s*[\'"](?P<url>[^\'"]+)[\'"]', None, 0),
     # Template literal: fetch(`/api/${id}`)  — capture just the static prefix
-    (r'fetch\s*\(`(/api[^`$]*)\`', None, 0),
+    (r'fetch\s*\(`(?P<url>[^`]+)`', None, 0),
 ]
 
 _HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
@@ -81,11 +82,19 @@ def analyze_routes(contents: dict[str, str]) -> list[ApiEndpoint]:
     for file_path, text in contents.items():
         for pattern, _, _ in _ROUTE_PATTERNS:
             for m in re.finditer(pattern, text, re.I | re.MULTILINE):
+                # Express .use mounts are relationships, not HTTP endpoints.
+                if m.groupdict().get('method', '').lower() == 'use':
+                    continue
                 route = _extract_path(m)
                 if not route:
                     continue
                 method = _extract_method(m, text, route)
-                key = f"{method}:{route}"
+                receiver = m.group(0).lstrip('@').split('.')[0]
+                prefix = re.search(r'\b' + re.escape(receiver) + r'\s*=\s*APIRouter\([^)]*prefix\s*=\s*[\'"]([^\'"]+)', text)
+                if prefix:
+                    route = prefix[1].rstrip('/') + '/' + route.lstrip('/')
+                route = _normalize_path(route)
+                key = f"{file_path}:{method}:{route}"
                 if key in seen:
                     continue
                 seen.add(key)
@@ -94,9 +103,25 @@ def analyze_routes(contents: dict[str, str]) -> list[ApiEndpoint]:
                     method=method,
                     source_file=file_path,
                     evidence=[f"Route declaration in `{file_path}`"],
+                    handler=_handler_after(text, m.end()),
                 ))
+                tail = text[m.end():m.end() + 500]
+                response = re.match(r'[^)]*\bresponse_model\s*=\s*(\w+)', tail)
+                request = re.search(r'def\s+\w+\([^)]*\b(?:req|request|body)\s*:\s*(\w+)', tail)
+                endpoints[-1].request_shape = request[1] if request else None
+                endpoints[-1].response_shape = response[1] if response else None
+                endpoints[-1].related_types = [match[1] for match in (request, response) if match]
+                if '.route' in m.group(0):
+                    from copy import deepcopy
+                    declaration = text[m.start():text.find(')', m.start()) + 1]
+                    methods = re.search(r'methods\s*=\s*\[([^]]+)\]', declaration)
+                    for additional in re.findall(r'[\'"](\w+)[\'"]', methods[1] if methods else ''):
+                        if additional.upper() in _HTTP_METHODS and additional.upper() != method:
+                            other = deepcopy(endpoints[-1])
+                            other.method = additional.upper()
+                            endpoints.append(other)
 
-    return endpoints
+    return resolve_mounts(endpoints, contents)
 
 
 def analyze_api_calls(contents: dict[str, str]) -> list[ApiEndpoint]:
@@ -114,11 +139,17 @@ def analyze_api_calls(contents: dict[str, str]) -> list[ApiEndpoint]:
                 if not url or not _is_api_path(url):
                     continue
                 method = _extract_method_from_call(m)
-                key = f"{method}:{_normalize_path(url)}"
+                if m.group(0).startswith('fetch'):
+                    options = text[m.end():m.end() + 250]
+                    explicit = re.match(r'\s*,\s*\{[^}]*?method\s*:\s*[\'"](\w+)', options, re.S | re.I)
+                    if explicit:
+                        method = explicit[1].upper()
+                external = url.startswith(('http://', 'https://', '//'))
+                key = f"{method}:{_normalize_path(url)}:{external}"
                 if key in seen:
                     # Update callers if same endpoint called from different file
                     for c in calls:
-                        if _normalize_path(c.route) == _normalize_path(url):
+                        if c.method == method and c.external == external and c.route == _normalize_path(url):
                             if file_path not in c.callers:
                                 c.callers.append(file_path)
                     continue
@@ -129,6 +160,7 @@ def analyze_api_calls(contents: dict[str, str]) -> list[ApiEndpoint]:
                     source_file=file_path,
                     callers=[file_path],
                     evidence=[f"API call in `{file_path}`"],
+                    external=external,
                 ))
 
     return calls
@@ -147,7 +179,7 @@ def match_routes_to_calls(
         call_key = _normalize_path(call.route)
         for route in routes:
             route_key = _normalize_path(route.route)
-            if call_key == route_key or call_key.rstrip("/") == route_key.rstrip("/"):
+            if not call.external and route.method in {call.method, 'UNKNOWN'} and paths_match(route_key, call_key):
                 for caller in call.callers:
                     if caller not in route.callers:
                         route.callers.append(caller)
@@ -271,6 +303,69 @@ def analyze_imports(contents: dict[str, str]) -> dict[str, list[str]]:
     return deps
 
 
+def resolve_imports(contents):
+    """Resolve only local imports with an unambiguous existing target."""
+    import posixpath
+    resolved = {}
+    for path, refs in analyze_imports(contents).items():
+        targets = []
+        for ref in refs:
+            if path.endswith('.py'):
+                level = len(ref) - len(ref.lstrip('.'))
+                base = posixpath.dirname(path)
+                for _ in range(max(0, level - 1)):
+                    base = posixpath.dirname(base)
+                candidate = posixpath.join(base, ref.lstrip('.').replace('.', '/'))
+            else:
+                candidate = posixpath.normpath(posixpath.join(posixpath.dirname(path), ref))
+            choices = [candidate] + [candidate + ext for ext in ('.py', '.ts', '.tsx', '.js', '.jsx')] + [candidate + '/index' + ext for ext in ('.ts', '.js')] + [candidate + '/__init__.py']
+            matches = [p for p in choices if p in contents]
+            if len(matches) == 1:
+                targets.append(matches[0])
+        if targets:
+            resolved[path] = sorted(set(targets))
+    return resolved
+
+
+def resolve_mounts(endpoints, contents):
+    """Resolve literal FastAPI include_router and Express mounts via imports."""
+    import posixpath
+    from copy import deepcopy
+    mounted = {}
+    for path, text in contents.items():
+        mounts = []
+        for match in re.finditer(r'''include_router\(\s*(\w+)(?:\.router)?\s*,\s*prefix\s*=\s*['"]([^'"]+)''', text):
+            mounts.append((match[1], match[2]))
+        for match in re.finditer(r'''app\.use\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)''', text):
+            mounts.append((match[2], match[1]))
+        for symbol, prefix in mounts:
+            target = None
+            js = re.search(r'''import\s+''' + re.escape(symbol) + r'''\s+from\s+['"]([^'"]+)''', text)
+            py = re.search(r'from\s+([.\w]+)\s+import\s+(?:router\s+as\s+)?' + re.escape(symbol) + r'\b', text)
+            if js and js[1].startswith('.'):
+                base = posixpath.normpath(posixpath.join(posixpath.dirname(path), js[1]))
+                target = next((p for p in (base, base + '.ts', base + '.js') if p in contents), None)
+            elif py:
+                module = py[1]
+                if module.startswith('.'):
+                    base = posixpath.dirname(path)
+                    level = len(module) - len(module.lstrip('.'))
+                    for _ in range(level - 1): base = posixpath.dirname(base)
+                    base = posixpath.join(base, module.lstrip('.').replace('.', '/'))
+                else:
+                    base = module.replace('.', '/')
+                options = (base + '.py', base + '/' + symbol + '.py')
+                target = next((p for p in options if p in contents), None)
+            if target:
+                for endpoint in endpoints:
+                    if endpoint.source_file == target:
+                        value = deepcopy(endpoint)
+                        value.route = _normalize_path(prefix.rstrip('/') + '/' + endpoint.route.lstrip('/'))
+                        value.evidence.append(f'Literal router mount in {path}')
+                        mounted.setdefault(id(endpoint), []).append(value)
+    return [value for endpoint in endpoints for value in mounted.get(id(endpoint), [endpoint])]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -300,13 +395,13 @@ def _extract_method(match: re.Match, text: str, route: str) -> str:
     except (IndexError, AttributeError):
         pass
     # Check for methods= in Flask @app.route style
-    remaining = text[match.end():match.end() + 100]
+    remaining = match.group(0) + text[match.end():match.end() + 100]
     methods_match = re.search(r"methods\s*=\s*\[([^\]]+)\]", remaining, re.I)
     if methods_match:
         m_list = re.findall(r"['\"](\w+)['\"]", methods_match.group(1))
         if m_list:
             return m_list[0].upper()
-    return "UNKNOWN"
+    return 'GET' if '.route' in match.group(0) else 'UNKNOWN'
 
 
 def _extract_method_from_call(match: re.Match) -> str:
@@ -335,9 +430,35 @@ def _normalize_path(path: str) -> str:
     - Remove template literal variables like ${id}
     """
     # Remove query string
-    path = path.split("?")[0]
+    if path.startswith(('http://', 'https://', '//')):
+        path = urlsplit(path).path
+    path = path.split("?")[0].split('#')[0]
     # Remove JS template literal variables
     path = re.sub(r"\$\{[^}]+\}", ":param", path)
     # Remove trailing slash
-    path = path.rstrip("/")
-    return path.lower()
+    path = re.sub(r'\{[^}]+\}|:[A-Za-z_]\w*(?:<[^>]+>)?', ':param', path)
+    path = re.sub(r'/+', '/', '/' + path.lstrip('/')).rstrip('/')
+    return path or '/'
+
+
+def paths_match(route, call):
+    pattern = re.escape(_normalize_path(route)).replace(':param', '[^/]+')
+    return bool(re.fullmatch(pattern, _normalize_path(call)))
+
+
+def _handler_after(text, position):
+    match = re.search(r'(?:async\s+)?(?:def|function)\s+(\w+)', text[position:position + 500])
+    return match[1] if match else None
+
+
+def detect_api_conflicts(routes, calls):
+    from app.intelligence.models import IntelligenceConflict
+    if not routes:
+        return []
+    conflicts = []
+    for call in calls:
+        if call.external:
+            continue
+        if not any(paths_match(route.route, call.route) and route.method in {call.method, 'UNKNOWN'} for route in routes):
+            conflicts.append(IntelligenceConflict('API consumer has no matching collected route', call.source_file, f'{call.method} {call.route}', ', '.join(sorted({r.source_file for r in routes})), 'No route with matching method/path detected'))
+    return conflicts

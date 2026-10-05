@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { LandingPage } from '@/components/landing/LandingPage';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { CustomCursor } from '@/components/ui/CustomCursor';
@@ -12,6 +12,7 @@ import { ContextBuilder } from '@/components/workspace/sections/ContextBuilder';
 import { PromptBuilder } from '@/components/workspace/sections/PromptBuilder';
 import { ConflictRadar } from '@/components/workspace/sections/ConflictRadar';
 import { Integration } from '@/components/workspace/sections/Integration';
+const AIWorkspace = lazy(() => import('@/components/workspace/sections/AIWorkspace').then((module) => ({ default: module.AIWorkspace })));
 import type { WorkspaceSection } from '@/types';
 
 type Page = 'landing' | 'workspace';
@@ -35,6 +36,8 @@ export default function App() {
 
   const renderSection = (section: WorkspaceSection) => {
     switch (section) {
+      case 'ai':
+        return null;
       case 'overview':
         return <Overview state={state} onConnectRepo={handleConnectRepo} />;
       case 'repository':
@@ -58,7 +61,7 @@ export default function App() {
 
   return (
     <>
-      <CustomCursor />
+      {page === 'landing' && <CustomCursor />}
 
       <AnimatePresence mode="wait">
         {page === 'landing' && (
@@ -80,6 +83,7 @@ export default function App() {
             transition={{ duration: 0.3 }}
           >
             <WorkspaceShell key={state.resetVersion} state={state} onBackToLanding={() => setPage('landing')}>
+              <div className="h-full" hidden={state.activeSection !== 'ai'}><Suspense fallback={<div role="status" className="h-full grid place-items-center text-baton-text-tertiary text-sm">Loading workspace…</div>}><AIWorkspace key={`${state.repo?.owner}/${state.repo?.repository}`} state={state} /></Suspense></div>
               {renderSection(state.activeSection)}
             </WorkspaceShell>
           </motion.div>

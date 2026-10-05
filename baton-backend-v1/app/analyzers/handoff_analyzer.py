@@ -1,6 +1,5 @@
-import re
+"""Compatibility projection of canonical handoff findings."""
 def analyze(contents):
- out=[]
- for path,text in contents.items():
-  if re.search(r"handoff|TODO|FIXME",text,re.I): out.append({"path":path,"items":[x.strip() for x in text.splitlines() if re.search(r"handoff|TODO|FIXME",x,re.I)]})
- return out
+    from app.intelligence.pipeline import run
+    files = [{'path': p, 'type': 'blob'} for p in contents]
+    return run(files, contents, {}, []).handoffs

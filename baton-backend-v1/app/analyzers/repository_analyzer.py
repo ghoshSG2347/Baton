@@ -1,9 +1,6 @@
-from app.analyzers.stack_analyzer import analyze as stack
-from app.analyzers.structure_analyzer import analyze as structure
-from app.analyzers.api_analyzer import analyze as api
-from app.analyzers.frontend_analyzer import analyze as frontend
-from app.analyzers.handoff_analyzer import analyze as handoffs
+from app.intelligence.pipeline import run
+
 class RepositoryAnalyzer:
- def analyze(self,files,contents,metadata=None):
-  result={"metadata":metadata or {},"stack":stack(files),**structure(files),**api(contents),**frontend(contents),"handoffs":handoffs(contents),"shared_files":[],"stray_files":[],"analysis_warnings":[]}
-  return result
+    def analyze(self, files, contents, metadata=None):
+        metadata = metadata or {}
+        return run(files, contents, metadata, metadata.get('skipped_files', [])).to_legacy_analysis()

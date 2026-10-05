@@ -263,8 +263,10 @@ def _classify_json_yaml(
     if any(p in path_parts for p in {"dist", "build", ".next", ".nuxt", "__pycache__"}):
         return "generated", ["Generated output path"], Confidence.HIGH
 
-    # Don't classify further — could be anything
-    return None, [], Confidence.LOW
+    consumers = _find_data_consumers(contents).get(path, [])
+    if consumers:
+        return 'static-data', [f'Referenced by {", ".join(sorted(set(consumers)))}'], Confidence.MEDIUM
+    return 'unknown', [f'Structured file {path}; purpose not determined'], Confidence.LOW
 
 
 def _find_data_consumers(contents: dict[str, str]) -> dict[str, list[str]]:
