@@ -3,18 +3,24 @@ import { useState, useEffect, useRef } from 'react';
 import { GitBranch, File, ChevronRight, Loader2, Github, LogOut } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { TreeItem, RepoValidation } from '@/types';
-import { batonApi } from '@/lib/api/batonApi';
+import { batonApi, type GitHubAccess } from '@/lib/api/batonApi';
 import { DEMO_BRANCHES, DEMO_TREE, DEMO_FILE_CONTENT } from '@/lib/demo';
 import { Button, MonoLabel, Panel, TelemetryLine, SectionLabel } from '@/components/ui/primitives';
 import { cn, shortSha } from '@/lib/utils';
+import { useRetryBackoff } from '@/hooks/useRetryBackoff';
 
 type ValidateState = 'idle' | 'loading' | 'success' | 'error';
 
 export function Repository({ state }: { state: WorkspaceStateHook }) {
   const [urlInput, setUrlInput] = useState(state.repoUrl || '');
   const [tokenInput, setTokenInput] = useState('');
+  const [access, setAccess] = useState<GitHubAccess | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
   const [validateState, setValidateState] = useState<ValidateState>('idle');
   const [error, setError] = useState<Error | null>(null);
+  const retryBlocked = useRetryBackoff(error);
+  const lastAccessToken = useRef('');
+  const sameAccess = lastAccessToken.current === (tokenInput.trim() || state.githubToken);
   const [branches, setBranches] = useState(state.isDemoMode ? DEMO_BRANCHES : [] as typeof DEMO_BRANCHES);
   const [tree, setTree] = useState<TreeItem[]>(state.isDemoMode ? DEMO_TREE : []);
   const [selectedFile, setSelectedFile] = useState<{ path: string; content: string } | null>(null);
@@ -60,9 +66,10 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   }, [state.fileReference, state.githubToken]);
 
   const handleValidate = async () => {
-    if (!urlInput.trim() || validateState === 'loading') return;
+    if (!urlInput.trim() || validateState === 'loading' || (retryBlocked && sameAccess)) return;
     const current = ++validationEpoch.current;
     const effectiveToken = tokenInput.trim() || state.githubToken;
+    lastAccessToken.current = effectiveToken;
     setValidateState('loading');
     setError(null);
 
@@ -102,6 +109,19 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   };
 
   const handleBranchSelect = (branchName: string) => state.setSelectedBranch(branchName);
+
+  const checkAccess = async () => {
+    if (accessBusy || (retryBlocked && sameAccess)) return;
+    setAccessBusy(true); setAccess(null); setError(null);
+    const token = tokenInput.trim() || state.githubToken;
+    lastAccessToken.current = token;
+    try {
+      const result = await batonApi.checkGitHubAccess(token || undefined);
+      state.setGithubToken(token); setTokenInput(''); setAccess(result);
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('GitHub access could not be checked.'));
+    } finally { setAccessBusy(false); }
+  };
 
   const handleFileClick = async (path: string) => {
     setSourceLabel('Current branch source');
@@ -194,7 +214,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
               />
             </div>
             <div className="flex items-center gap-3">
-              <Button variant="primary" onClick={handleValidate} disabled={validateState === 'loading' || !urlInput.trim()}>
+              <Button variant="primary" onClick={handleValidate} disabled={validateState === 'loading' || !urlInput.trim() || (retryBlocked && sameAccess)}>
                 {validateState === 'loading' ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
@@ -217,6 +237,14 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       {/* Repository connected — metadata + change action */}
       {state.repo && (
         <>
+          <Panel label="GITHUB ACCESS" className="mb-6">
+            <div className="p-4 space-y-3">
+              <p className="text-xs text-baton-text-tertiary">GitHub tokens are optional and kept only in memory. Re-enter your token after reloading the browser.</p>
+              <input aria-label="GitHub token for connected repository" type="password" autoComplete="off" value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} placeholder={state.githubToken ? 'Token present in this tab' : 'Optional GitHub token'} className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2.5 text-sm text-baton-white outline-none font-mono" />
+              <Button variant="secondary" onClick={checkAccess} disabled={accessBusy || (retryBlocked && sameAccess)}>{accessBusy ? 'Checking access…' : 'Check GitHub access'}</Button>
+              {access && <p role="status" className="text-xs text-baton-text-secondary">{access.authenticated ? 'GitHub accepted the token.' : 'Using public unauthenticated access.'} Token source: {access.token_source}. Requests remaining: {access.rate_limit.remaining ?? 'unavailable'} / {access.rate_limit.limit ?? 'unavailable'}.{access.rate_limit.reset_at ? ` Reset: ${new Date(access.rate_limit.reset_at * 1000).toLocaleString()}.` : ''}</p>}
+            </div>
+          </Panel>
           {/* Change repository action */}
           <div className="flex items-center justify-between mb-4">
             <div>

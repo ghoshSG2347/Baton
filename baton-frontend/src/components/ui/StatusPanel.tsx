@@ -4,6 +4,7 @@ import { BatonApiError } from '@/lib/api/batonApi';
 import { requestFailure, type Severity } from '@/lib/workspaceStatus';
 import { redactUserText } from '@/lib/utils/redaction';
 import './StatusPanel.css';
+import { useRetryBackoff } from '@/hooks/useRetryBackoff';
 
 export function StatusPanel({ severity = 'info', title, explanation, technicalDetails, primaryAction, secondaryAction, children, className = '' }: {
   severity?: Severity; title: string; explanation: string; technicalDetails?: string;
@@ -19,7 +20,8 @@ export function StatusPanel({ severity = 'info', title, explanation, technicalDe
 }
 
 export function ErrorStatus({ error, operation, primaryAction, secondaryAction }: { error: unknown; operation?: string; primaryAction?: ReactNode; secondaryAction?: ReactNode }) {
+  const blocked = useRetryBackoff(error);
   const message = requestFailure(error, operation);
   const details = error instanceof BatonApiError ? `HTTP ${error.status || 'unavailable'} · ${error.code}\n${error.message}` : undefined;
-  return <StatusPanel {...message} technicalDetails={details} primaryAction={primaryAction} secondaryAction={secondaryAction} />;
+  return <StatusPanel {...message} technicalDetails={details} primaryAction={primaryAction && <fieldset disabled={blocked}>{primaryAction}</fieldset>} secondaryAction={secondaryAction} />;
 }

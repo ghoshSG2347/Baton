@@ -10,6 +10,7 @@ import { redactUserText } from '@/lib/utils/redaction';
 import { ErrorStatus, StatusPanel } from '@/components/ui/StatusPanel';
 import { analysisAction, repositoryMessage, requestFailure, snapshotState } from '@/lib/workspaceStatus';
 import './AIWorkspace.css';
+import { useRetryBackoff } from '@/hooks/useRetryBackoff';
 type Turn = { id: number; question: string; result: ChatAnswer };
 const artifactNames: Record<ArtifactType, string> = {
   context: 'Repository context', handoff: 'Developer handoff', prd: 'PRD evidence draft',
@@ -42,6 +43,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
   const [busy, setBusy] = useState<'inspect' | 'refresh' | 'chat' | 'artifact' | 'compare' | null>(null);
   const [error, setError] = useState<{ cause: unknown; operation: string } | null>(null);
   const [branchError, setBranchError] = useState<unknown>(null);
+  const retryBlocked = useRetryBackoff(error?.cause);
   const [inspectionScope, setInspectionScope] = useState('');
   const [knownHead, setKnownHead] = useState({ key: '', sha: '' });
   const [panelOpen, setPanelOpen] = useState(true);
@@ -53,6 +55,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
   const [activeArtifact, setActiveArtifact] = useState<WorkspaceArtifact | null>(null);
   const [artifactType, setArtifactType] = useState<ArtifactType>('context');
   const epoch = useRef(0);
+  const analysisLock = useRef('');
   const controller = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
   const preview = useRef<HTMLDivElement | null>(null);
@@ -139,18 +142,20 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     return () => { document.removeEventListener('keydown', handleKey); previousFocus?.focus(); };
   }, [activeArtifact]);
   const refresh = async () => {
-    if (!canOperate || busy) return;
+    if (!canOperate || busy || retryBlocked || analysisLock.current === scopeKey) return;
+    analysisLock.current = scopeKey;
     const current = ++epoch.current; controller.current?.abort();
     setBusy('refresh'); setError(null); setInspection(null); setTurns([]); setConversationId(undefined);
     setArtifacts([]); setActiveArtifact(null); setComparison(null);
     try {
-      if (request.folder) await batonApi.analyzeFolder(request.owner, request.repo, request.branch, request.folder, state.githubToken || undefined);
-      else await batonApi.analyzeRepository(request.owner, request.repo, request.branch, state.githubToken || undefined);
+      const forceRefresh = ['READY', 'STALE', 'SNAPSHOT_INVALID'].includes(lifecycle);
+      if (request.folder) await batonApi.analyzeFolder(request.owner, request.repo, request.branch, request.folder, state.githubToken || undefined, forceRefresh);
+      else await batonApi.analyzeRepository(request.owner, request.repo, request.branch, state.githubToken || undefined, forceRefresh);
       if (current !== epoch.current) return;
       const result = await batonApi.inspectWorkspace({ ...request, commit: undefined, continue_snapshot: false }, state.githubToken || undefined);
       if (current === epoch.current) { acceptInspection(result); }
     } catch (err) { if (current === epoch.current) setError({ cause: err, operation: 'analysis' }); }
-    finally { if (current === epoch.current) setBusy(null); }
+    finally { if (analysisLock.current === scopeKey) analysisLock.current = ''; if (current === epoch.current) setBusy(null); }
   };
   const ask = async (question = message) => {
     if (!chatReady || !inspection || busy || !question.trim()) return;
@@ -216,12 +221,12 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
       <code title={currentHead || undefined}>{currentHead ? shortSha(currentHead) : 'Commit unavailable'}</code>
       <span className="ai-scope-divider" />
       <button onClick={() => setScopeOpen((open) => !open)} aria-expanded={scopeOpen}>{member?.name || 'Project scope'} <ChevronDown size={12} /></button>
-      <button className="ai-refresh" onClick={refresh} disabled={!canOperate || busy !== null}><RefreshCw size={13} className={busy === 'refresh' ? 'ai-spin' : ''} />{busy === 'refresh' ? 'Analyzing…' : actionLabel}</button>
+      <button className="ai-refresh" onClick={refresh} disabled={!canOperate || busy !== null || retryBlocked}><RefreshCw size={13} className={busy === 'refresh' ? 'ai-spin' : ''} />{busy === 'refresh' ? 'Analyzing…' : actionLabel}</button>
     </div>
     <div className="ai-state-row"><div className="ai-visible-state"><code>{state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository'}</code><span className={`ai-lifecycle ai-lifecycle-${statusMessage.severity}`}>{ready ? 'Current' : statusMessage.title}</span><span>Commit: <code title={currentHead || undefined}>{currentHead ? shortSha(currentHead) : 'Commit unavailable'}</code></span><span>Role: {member?.role || 'Unassigned'}</span><span>Ownership: {member ? member.folders.join(', ') || 'Unassigned' : 'Project-wide'}</span></div>{branchNotice && <p className="ai-branch-notice" role="status">{branchNotice}</p>}
       {canOperate && !ready && <StatusPanel {...statusMessage} className="ai-analysis-status"
         technicalDetails={error?.cause instanceof BatonApiError ? `HTTP ${error.cause.status} · ${error.cause.code}` : lifecycle === 'SNAPSHOT_INVALID' ? 'Snapshot identity or validity did not match the selected repository, branch, folder and commit.' : undefined}
-        primaryAction={!['CONNECTING', 'ANALYZING', 'EMPTY_REPOSITORY'].includes(lifecycle) && <Button onClick={refresh} disabled={!!busy}>{actionLabel}</Button>}
+        primaryAction={!['CONNECTING', 'ANALYZING', 'EMPTY_REPOSITORY'].includes(lifecycle) && <Button onClick={refresh} disabled={!!busy || retryBlocked}>{actionLabel}</Button>}
         secondaryAction={lifecycle !== 'ANALYZING' && <Button variant="ghost" onClick={() => document.querySelector<HTMLSelectElement>('[aria-label="Current repository branch"]')?.focus()}>Switch branch</Button>}>
         {currentHead && <p className="baton-status-commit">Current commit <code title={currentHead}>{shortSha(currentHead)}</code></p>}
       </StatusPanel>}
@@ -279,7 +284,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
       <Panel className="ai-snapshot-card" label="SNAPSHOT"><h2>Snapshot</h2>{ready && inspection ? <><div className="ai-snapshot-state"><i />Current · {inspection.completeness.status.toLowerCase()} coverage</div><p>Repository intelligence is synchronized with this branch and commit.</p><dl><dt>Branch</dt><dd>{inspection.identity.branch}</dd><dt>Commit</dt><dd><code>{shortSha(inspection.identity.commit)}</code></dd><dt>Analyzed</dt><dd>{new Date(inspection.identity.analysis_timestamp).toLocaleString()}</dd><dt>Files analyzed</dt><dd>{inspection.completeness.files_analyzed} / {inspection.completeness.files_discovered}</dd><dt>Source omissions</dt><dd>{inspection.completeness.files_omitted}</dd><dt>Budget omissions</dt><dd>{inspection.completeness.budget_omitted_blocks}</dd></dl>
         <details><summary>Ownership & boundaries</summary><p>Editable: {inspection.relevance.editable_files.join(', ') || 'Ownership configuration was not provided.'}</p><p>Protected: {inspection.relevance.protected_files.join(', ') || 'No matching protected paths'}</p><p>Cross-boundary reading: {inspection.relevance.cross_boundary_files.join(', ') || 'None recorded'}</p></details>
         {inspection.omission_manifest.length > 0 && <details><summary>Review {inspection.omission_manifest.length} omissions</summary>{inspection.omission_manifest.map((item, index) => <p key={index}><strong>{item.category}</strong> · {item.source_paths.join(', ') || item.record} · {item.reason}</p>)}</details>}
-      </> : <><h3 className="ai-context-state">{lifecycle === 'NOT_ANALYZED' ? 'No analysis snapshot yet' : statusMessage.title}</h3><p>{statusMessage.explanation}</p>{currentHead && <p>Branch {request.branch} · <code title={currentHead}>{shortSha(currentHead)}</code></p>}{canOperate && !['CONNECTING', 'ANALYZING', 'EMPTY_REPOSITORY'].includes(lifecycle) && <Button variant="secondary" onClick={refresh} disabled={!!busy}>{actionLabel}</Button>}</>}</Panel>
+      </> : <><h3 className="ai-context-state">{lifecycle === 'NOT_ANALYZED' ? 'No analysis snapshot yet' : statusMessage.title}</h3><p>{statusMessage.explanation}</p>{currentHead && <p>Branch {request.branch} · <code title={currentHead}>{shortSha(currentHead)}</code></p>}{canOperate && !['CONNECTING', 'ANALYZING', 'EMPTY_REPOSITORY'].includes(lifecycle) && <Button variant="secondary" onClick={refresh} disabled={!!busy || retryBlocked}>{actionLabel}</Button>}</>}</Panel>
       <section className="ai-artifacts"><div className="ai-panel-title"><h2>Artifacts</h2><span>{artifacts.length.toString().padStart(2, '0')}</span></div><p>Reviewable drafts from the same context.</p>{artifactType === 'prompt' && <select aria-label="Coding agent target" value={promptTarget} onChange={(event) => setPromptTarget(event.target.value)}>{['Codex', 'Anti-Gravity', 'Claude Code', 'Cursor'].map((target) => <option key={target}>{target}</option>)}</select>}<select aria-label="Artifact type" value={artifactType} onChange={(event) => setArtifactType(event.target.value as ArtifactType)}>{Object.entries(artifactNames).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select><button className="ai-generate" disabled={!ready || !!busy || (artifactType === 'prompt' && !task.trim())} onClick={generateArtifact}><Plus size={14} />{busy === 'artifact' ? 'Preparing…' : 'Generate artifact'}</button>{artifactType === 'prompt' && !task.trim() && <p>Set an explicit task in scope settings to generate a prompt.</p>}
         {(inspectionMatches ? artifacts : []).map((artifact) => <button className={`ai-artifact-item ${activeArtifact === artifact ? 'ai-artifact-active' : ''}`} key={artifact.artifact_type} onClick={() => setActiveArtifact(artifact)}><FileText size={17} /><span>{artifactNames[artifact.artifact_type]}<small>{shortSha(artifact.identity.commit)} · Markdown</small></span></button>)}
       </section>

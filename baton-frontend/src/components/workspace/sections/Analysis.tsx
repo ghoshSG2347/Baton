@@ -8,6 +8,7 @@ import { batonApi } from '@/lib/api/batonApi';
 import { DEMO_ANALYSIS } from '@/lib/demo';
 import { Button, MonoLabel, Panel, SectionLabel, TelemetryLine } from '@/components/ui/primitives';
 import { formatTimestamp, shortSha, formatNumber } from '@/lib/utils';
+import { useRetryBackoff } from '@/hooks/useRetryBackoff';
 
 type AnalysisState = 'idle' | 'loading' | 'success' | 'partial' | 'error';
 
@@ -15,9 +16,11 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
   const [analysisState, setAnalysisState] = useState<AnalysisState>('idle');
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(state.isDemoMode ? DEMO_ANALYSIS : null);
   const [error, setError] = useState<Error | null>(null);
+  const retryBlocked = useRetryBackoff(error);
   const [folderInput, setFolderInput] = useState(state.selectedFolder || '');
 
   const epoch = useRef(0);
+  const analysisLock = useRef('');
   const selectedIdentity = `${state.repo?.owner}/${state.repo?.repository}:${state.selectedBranch || state.repo?.default_branch || ''}:${state.selectedFolder}`;
   useEffect(() => {
     epoch.current++; setAnalysis(state.isDemoMode ? DEMO_ANALYSIS : null); setAnalysisState('idle'); setError(null); setFolderInput(state.selectedFolder);
@@ -28,7 +31,8 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleAnalyze = async () => {
-    if (!hasRepo || analysisState === 'loading') return;
+    if (!hasRepo || analysisState === 'loading' || retryBlocked || analysisLock.current === selectedIdentity) return;
+    analysisLock.current = selectedIdentity;
     const current = ++epoch.current;
     setAnalysisState('loading');
     setError(null);
@@ -38,6 +42,7 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
         if (current !== epoch.current) return;
         setAnalysis(DEMO_ANALYSIS);
         setAnalysisState(DEMO_ANALYSIS.analysis_warnings.length > 0 ? 'partial' : 'success');
+        analysisLock.current = '';
       }, 1500);
       return;
     }
@@ -46,8 +51,8 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
       if (!state.repo) return;
       const folder = folderInput || state.selectedFolder || '';
       const result = folder
-        ? await batonApi.analyzeFolder(state.repo.owner, state.repo.repository, state.selectedBranch || state.repo.default_branch || '', folder, state.githubToken || undefined)
-        : await batonApi.analyzeRepository(state.repo.owner, state.repo.repository, state.selectedBranch || state.repo.default_branch || '', state.githubToken || undefined);
+        ? await batonApi.analyzeFolder(state.repo.owner, state.repo.repository, state.selectedBranch || state.repo.default_branch || '', folder, state.githubToken || undefined, !!analysis)
+        : await batonApi.analyzeRepository(state.repo.owner, state.repo.repository, state.selectedBranch || state.repo.default_branch || '', state.githubToken || undefined, !!analysis);
       if (current !== epoch.current) return;
       setAnalysis(result);
       state.markAnalysisComplete();
@@ -56,6 +61,8 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
       if (current !== epoch.current) return;
       setAnalysisState('error');
       setError(err instanceof Error ? err : new Error('Analysis failed'));
+    } finally {
+      if (analysisLock.current === selectedIdentity) analysisLock.current = '';
     }
   };
 
@@ -104,7 +111,7 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
             className="flex-1 bg-transparent text-sm text-baton-white placeholder:text-baton-text-tertiary outline-none font-mono"
           />
         </div>
-        <Button variant="primary" onClick={handleAnalyze} disabled={analysisState === 'loading'}>
+        <Button variant="primary" onClick={handleAnalyze} disabled={analysisState === 'loading' || retryBlocked}>
           {analysisState === 'loading' ? (
             <>
               <Loader2 size={14} className="animate-spin" />

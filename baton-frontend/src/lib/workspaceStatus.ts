@@ -24,7 +24,12 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
 
   if (status === 401) return { state: 'PERMISSION_DENIED', severity: 'error', title: 'Baton authentication required', explanation: 'Enter a valid Baton access key in workspace settings.' };
 
-  if (code === 'github_rate_limit') return { state: 'RATE_LIMITED', severity: 'warning', title: 'GitHub rate limit reached', explanation: 'Try again later or provide a valid GitHub token for a higher limit.' };
+  if (code === 'github_rate_limit' && error instanceof BatonApiError) {
+    const remaining = error.rateLimit?.remaining;
+    const reset = error.rateLimit?.reset_at;
+    const metadata = `${remaining !== undefined ? ` Requests remaining: ${remaining}.` : ''}${reset && remaining === 0 ? ` Reset: ${new Date(reset * 1000).toLocaleString()}.` : ''}`;
+    return { state: 'RATE_LIMITED', severity: 'warning', title: 'GitHub API limit reached', explanation: `GitHub has temporarily limited API requests, so Baton cannot analyze this repository right now.${metadata}${error.rateLimitKind === 'secondary' ? ' A secondary limit requires a backoff period.' : ''} Wait until the reset or backoff period ends. Check GitHub access in Repository to verify your token.` };
+  }
 
   if (status === 429) return { state: 'RATE_LIMITED', severity: 'warning', title: 'Request limit reached', explanation: 'The service is busy or its quota is exhausted. Try again later.' };
   if (status === 504) return { state: 'REQUEST_FAILED', severity: 'error', title: 'Request timed out', explanation: 'The service took too long to respond. Retry the operation.' };

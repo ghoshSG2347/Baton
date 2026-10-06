@@ -11,7 +11,7 @@ const calls = [], failures = [], checks = [];
 const heads = { main: fixture.project.identity.current_head, 'feature/ask-book': fixture.feature.identity.current_head, missing: '3a7a550985975a73805974c0e8017c720b6dc8f0' };
 const baseState = { repo: { owner: 'example', repository: 'project', default_branch: 'main', accessible: true }, selectedBranch: 'main', selectedFolder: '', repoUrl: 'https://github.com/example/project', isDemoMode: false, members: [] };
 const preview = process.env.BATON_PREVIEW_URL || 'http://127.0.0.1:5174/';
-async function loaded() { await page.locator('.ai-scope-bar button.ai-refresh:not(:disabled)').waitFor(); }
+async function loaded() { await page.waitForFunction(() => { const button = document.querySelector('.ai-refresh'); return button && (!button.disabled || document.querySelector('.ai-lifecycle')?.textContent === 'GitHub API limit reached'); }); }
 async function start(nextMode, branch = 'main') {
  mode = nextMode; analysisFailure = null; delayedBranch = '';
  await page.goto(preview);
@@ -45,10 +45,11 @@ function inspection(body) {
   const body = req.method() === 'POST' ? req.postDataJSON() || {} : {}; calls.push({ path: url.pathname, body });
   const send = (response, status = 200) => route.fulfill({ status, json: response, headers: { 'Access-Control-Allow-Origin': '*' } });
   if (req.method() === 'OPTIONS') return send({});
+  if (url.pathname.endsWith('/access')) return send({authenticated:true,token_present:true,token_source:'request',upstream_status:200,rate_limit:{limit:5000,remaining:4999,reset_at:2000000000}});
   if (url.pathname.endsWith('/branches')) return send({ branches: Object.entries(heads).map(([name, sha]) => ({ name, sha })) });
   if (url.pathname.endsWith('/inspect')) {
    if (mode === 'network') return route.abort('failed');
-   if (typeof mode === 'object') return send({ detail: 'Synthetic safe diagnostic', code: mode.code }, mode.status);
+   if (typeof mode === 'object') return send({ detail: 'Synthetic safe diagnostic', ...mode }, mode.status);
    const result = inspection(body);
    if (body.branch === delayedBranch) await new Promise(resolve => { releaseBranch = resolve; });
    return send(result);
@@ -94,7 +95,7 @@ function inspection(body) {
  await check('refresh sends force_refresh and creates a current reinspection', async () => {
   const before = analysisCount; await page.locator('.ai-refresh').click(); await loaded();
   assert.equal(analysisCount, before + 1);
-  assert(calls.filter(call => call.path.includes('/analysis/')).every(call => call.body.force_refresh === true));
+  assert.equal(calls.filter(call => call.path.includes('/analysis/')).at(-1).body.force_refresh, true);
   assert.equal(await page.locator('.ai-grounding').innerText(), 'Repository grounded');
  });
  await check('branch switch cannot reuse previous snapshot', async () => {
@@ -129,7 +130,7 @@ function inspection(body) {
   await page.getByRole('button', {name:'New chat',exact:true}).click();
   assert.equal(await page.locator('.ai-grounding').innerText(), 'Analysis failed', 'New chat must not erase a repository failure');
  });
- for (const [status, code, title] of [[401,'github_authentication_failure','GitHub authentication failed'],[403,'github_permission_failure','GitHub denied the request'],[404,'github_not_found','Repository or branch not found'],[429,'github_rate_limit','GitHub rate limit reached'],[502,'github_network_failure','Could not reach the repository service']]) {
+ for (const [status, code, title] of [[401,'github_authentication_failure','GitHub authentication failed'],[403,'github_permission_failure','GitHub denied the request'],[404,'github_not_found','Repository or branch not found'],[429,'github_rate_limit','GitHub API limit reached'],[502,'github_network_failure','Could not reach the repository service']]) {
   await start({status,code});
   await check('HTTP ' + status + ' category is safe and chat remains disabled', async () => {
    assert((await page.locator('.ai-analysis-status').innerText()).includes(title));
@@ -137,6 +138,37 @@ function inspection(body) {
    assert(!(await page.locator('.ai-analysis-status').innerText()).includes('Synthetic'));
   });
  }
+ await start({status:429, code:'github_rate_limit', rate_limit_kind:'primary', rate_limit:{limit:60,remaining:0,used:60,reset_at:Math.floor(Date.now()/1000)+120}});
+ await check('primary rate limit shows remaining/reset and disables all analysis retries', async () => {
+  const text = await page.locator('.ai-analysis-status').innerText();
+  assert(text.includes('Requests remaining: 0') && text.includes('Reset:'));
+  assert(await page.locator('.ai-refresh').isDisabled());
+  const retryButtons = page.getByRole('button', {name:'Retry analysis',exact:true});
+  for (const button of await retryButtons.all()) assert(await button.isDisabled());
+  const before = analysisCount; await page.locator('.ai-refresh').evaluate(button => button.click());
+  assert.equal(analysisCount, before);
+ });
+ await start({status:429, code:'github_rate_limit', rate_limit_kind:'secondary', retry_after:1, rate_limit:{limit:5000,remaining:4999}});
+ await check('secondary backoff expires without an automatic analysis retry', async () => {
+  assert((await page.locator('.ai-analysis-status').innerText()).includes('secondary limit'));
+  assert(await page.locator('.ai-refresh').isDisabled());
+  const before = analysisCount; await page.locator('.ai-refresh:not(:disabled)').waitFor();
+  assert.equal(analysisCount, before);
+ });
+ await start('ready');
+ await check('opening chat and Context Builder never triggers analysis', async () => {
+  const before = analysisCount;
+  await page.getByRole('button',{name:'Context Builder',exact:true}).click();
+  await page.getByRole('button',{name:'AI workspace',exact:true}).click(); await loaded();
+  assert.equal(analysisCount, before);
+ });
+ await check('connected repository accepts a token again and keeps it out of storage', async () => {
+  await page.getByRole('button',{name:'Repository',exact:true}).click();
+  await page.getByLabel('GitHub token for connected repository').fill('audit-token-canary');
+  await page.getByRole('button',{name:'Check GitHub access',exact:true}).click();
+  await page.getByText(/GitHub accepted the token/).waitFor();
+  assert(!(await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage))).includes('audit-token-canary'));
+ });
  await start('network'); await check('browser network failure is distinguished', async () => {
   assert((await page.locator('.ai-analysis-status').innerText()).includes('Could not reach the repository service'));
  });

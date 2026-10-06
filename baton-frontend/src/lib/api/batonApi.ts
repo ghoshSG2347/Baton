@@ -21,6 +21,9 @@ export class BatonApiError extends Error {
   status: number;
   detail: string;
   code: string;
+  rateLimit?: GitHubRateLimit;
+  retryAt?: number;
+  rateLimitKind?: string;
 
   constructor(message: string, status: number = 0, detail?: string, code: string = 'baton_backend_failure') {
     super(message);
@@ -31,7 +34,13 @@ export class BatonApiError extends Error {
   }
 }
 
+export type GitHubRateLimit = { limit?: number; remaining?: number; used?: number; reset_at?: number };
+export type GitHubAccess = { authenticated: boolean; token_present: boolean; token_source: 'request' | 'server' | 'none'; upstream_status: number; rate_limit: GitHubRateLimit };
+
 export type ApiError = BatonApiError;
+// Concurrent mounted views share this read. Keys/credentials exist only until
+// the request settles; nothing is persisted in browser storage.
+const branchReads = new Map<string, Promise<Branch[]>>();
 
 async function apiRequest<T>(
   endpoint: string,
@@ -62,9 +71,21 @@ async function apiRequest<T>(
   if (!res.ok) {
     let bodyDetail = '';
     let errorCode = 'baton_backend_failure';
+    let rateLimit: GitHubRateLimit | undefined;
+    let retryAfter: number | undefined;
+    let rateLimitKind: string | undefined;
     try {
       const body = await res.json();
       if (typeof body.code === 'string') errorCode = body.code;
+      if (body.rate_limit && typeof body.rate_limit === 'object') {
+        rateLimit = {};
+        for (const key of ['limit', 'remaining', 'used', 'reset_at'] as const) {
+          const value = body.rate_limit[key];
+          if (typeof value === 'number' && Number.isFinite(value) && value >= 0) rateLimit[key] = value;
+        }
+      }
+      if (typeof body.retry_after === 'number' && Number.isFinite(body.retry_after) && body.retry_after >= 0) retryAfter = body.retry_after;
+      if (['primary', 'secondary', 'unknown'].includes(body.rate_limit_kind)) rateLimitKind = body.rate_limit_kind;
       if (typeof body.detail === 'string') {
         bodyDetail = body.detail;
       } else if (Array.isArray(body.detail)) {
@@ -90,7 +111,14 @@ async function apiRequest<T>(
     }
 
     const message = redactUserText(bodyDetail || defaultMsg, [githubToken || '', batonAccessKey]);
-    throw new BatonApiError(message, res.status, message, errorCode);
+    const failure = new BatonApiError(message, res.status, message, errorCode);
+    failure.rateLimit = rateLimit;
+    failure.rateLimitKind = rateLimitKind;
+    if (errorCode === 'github_rate_limit') {
+      failure.retryAt = Math.max(rateLimit?.remaining === 0 ? (rateLimit.reset_at || 0) * 1000 : 0,
+        Date.now() + (retryAfter ?? (rateLimit?.remaining === 0 && rateLimit.reset_at ? 0 : 60)) * 1000);
+    }
+    throw failure;
   }
 
   try {
@@ -101,6 +129,13 @@ async function apiRequest<T>(
 }
 
 export const batonApi = {
+  async checkGitHubAccess(token?: string): Promise<GitHubAccess> {
+    const result = await apiRequest<GitHubAccess>('/api/v1/github/access', { method: 'GET' }, token);
+    if (typeof result?.authenticated !== 'boolean' || !result.rate_limit || !['request', 'server', 'none'].includes(result.token_source)) {
+      throw new BatonApiError('Baton backend returned an invalid GitHub access response.', 502);
+    }
+    return result;
+  },
   async inspectWorkspace(request: WorkspaceRequest, token?: string): Promise<WorkspaceInspection> {
     const result = await apiRequest<WorkspaceInspection>('/api/v1/workspace/inspect', { method: 'POST', body: JSON.stringify(request) }, token);
     const identity = result?.identity;
@@ -144,6 +179,10 @@ export const batonApi = {
   },
 
   async getBranches(owner: string, repo: string, githubToken?: string): Promise<Branch[]> {
+    const readKey = JSON.stringify([owner, repo, githubToken || '', batonAccessKey]);
+    const pending = branchReads.get(readKey);
+    if (pending) return pending;
+    const read = (async () => {
     const params = new URLSearchParams({ owner, repo });
     const data = await apiRequest<{ branches: Branch[] }>(
       `/api/v1/github/branches?${params}`,
@@ -154,6 +193,10 @@ export const batonApi = {
       throw new BatonApiError('Baton backend returned an invalid branch list.', 502);
     }
     return data.branches;
+    })();
+    branchReads.set(readKey, read);
+    try { return await read; }
+    finally { branchReads.delete(readKey); }
   },
 
   async getTree(
@@ -194,13 +237,14 @@ export const batonApi = {
     repo: string,
     branch: string,
     folder: string,
-    githubToken?: string
+    githubToken?: string,
+    forceRefresh = false
   ): Promise<AnalysisResult> {
     return apiRequest<AnalysisResult>(
       '/api/v1/analysis/folder',
       {
         method: 'POST',
-        body: JSON.stringify({ owner, repo, branch, folder, force_refresh: true }),
+        body: JSON.stringify({ owner, repo, branch, folder, force_refresh: forceRefresh }),
       },
       githubToken
     );
@@ -210,13 +254,14 @@ export const batonApi = {
     owner: string,
     repo: string,
     branch: string,
-    githubToken?: string
+    githubToken?: string,
+    forceRefresh = false
   ): Promise<AnalysisResult> {
     return apiRequest<AnalysisResult>(
       '/api/v1/analysis/repository',
       {
         method: 'POST',
-        body: JSON.stringify({ owner, repo, branch, force_refresh: true }),
+        body: JSON.stringify({ owner, repo, branch, force_refresh: forceRefresh }),
       },
       githubToken
     );
