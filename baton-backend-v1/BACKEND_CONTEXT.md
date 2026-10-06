@@ -1,5 +1,7 @@
 # Baton V1 Backend Integration Contract
 
+> Current implementation reference (2026-10-06): [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md) and [PROJECT_AUDIT.md](../PROJECT_AUDIT.md). This V1 contract is historical: the backend now has process-local intelligence snapshots, GitHub observations and conversations, canonical context projections and a Gemini workspace. Use the canonical API inventory and storage/freshness model for current integration work.
+
 ## 1. Document Purpose
 
 `BACKEND_CONTEXT.md` is the authoritative frontend/backend technical integration contract for **Baton V1**.

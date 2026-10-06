@@ -48,12 +48,8 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
       const branchFiles: Record<string, string[]> = {};
       for (const branchName of branchNames) {
         if (state.repo) {
-          try {
-            const tree = await batonApi.getTree(state.repo.owner, state.repo.repository, branchName, '', state.githubToken || undefined);
-            branchFiles[branchName] = tree.filter((t) => t.type === 'blob').map((t) => t.path);
-          } catch {
-            branchFiles[branchName] = [];
-          }
+          const tree = await batonApi.getTree(state.repo.owner, state.repo.repository, branchName, '', state.githubToken || undefined);
+          branchFiles[branchName] = tree.filter((t) => t.type === 'blob').map((t) => t.path);
         }
       }
       const res = await batonApi.detectConflicts(branchFiles, [], state.githubToken || undefined);

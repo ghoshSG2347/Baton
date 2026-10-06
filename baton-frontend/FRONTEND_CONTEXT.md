@@ -1,5 +1,7 @@
 # Baton Frontend Architecture & Implementation Contract
 
+> Current implementation reference (2026-10-06): [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md) and [PROJECT_AUDIT.md](../PROJECT_AUDIT.md). This historical document contains older descriptions: Conflict Radar compares inventory presence, not changed files; standalone Context Builder purpose/member/budget controls are not sent to the backend; Overview metrics include placeholders. Consult the canonical context before relying on those claims.
+
 > **Authoritative Frontend Context & Source of Truth**  
 > **Repository:** `baton-frontend/`  
 > **Date:** October 2026  

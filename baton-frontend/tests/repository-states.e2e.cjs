@@ -66,6 +66,20 @@ function inspection(body) {
   if (url.pathname.endsWith('/tree')) return send({ items: [] });
   return send({ status: 'ok', service: 'baton-backend' });
  });
+ await start('ready');
+ await check('Conflict Radar preserves a failed branch read instead of reporting no conflicts', async () => {
+  await page.getByRole('button', { name: 'Conflict Radar', exact: true }).click();
+  await page.locator('textarea:visible').fill('main\nmissing');
+  await page.route('**/api/v1/github/tree?**', route => route.fulfill({ status: 404, json: { detail: 'GitHub repository or resource not found, or inaccessible.', code: 'github_not_found' } }));
+  const before = calls.filter(call => call.path.endsWith('/conflicts')).length;
+  await page.getByRole('button', { name: 'SCAN FOR CONFLICTS', exact: true }).click();
+  await page.getByText('Repository or branch not found', { exact: true }).waitFor();
+  await page.getByText('Technical details', { exact: true }).click();
+  assert((await page.locator('.baton-status pre').innerText()).includes('HTTP 404 · github_not_found'));
+  assert.equal(calls.filter(call => call.path.endsWith('/conflicts')).length, before);
+  assert.equal(await page.getByText('NO CONFLICTS DETECTED', { exact: true }).count(), 0);
+  await page.unroute('**/api/v1/github/tree?**');
+ });
  await start('missing', 'missing');
  await check('connected without analysis: neutral grounding, known HEAD, neutral role/ownership, disabled composer', async () => {
   assert.equal(await page.locator('.ai-grounding').innerText(), 'Repository connected');
