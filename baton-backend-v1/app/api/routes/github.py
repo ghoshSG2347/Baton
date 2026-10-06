@@ -1,4 +1,6 @@
 from fastapi import APIRouter,Depends,Query
+import re
+from app.core.exceptions import BatonError
 from app.api.deps import github_token
 from app.services.github_service import GitHubService
 from app.schemas.github import *
@@ -14,4 +16,7 @@ async def branches(owner:str,repo:str,token=Depends(github_token)): return {"bra
 @router.get("/tree")
 async def tree(owner:str,repo:str,branch:str,path:str="",token=Depends(github_token)): return {"items":await GitHubService(token).tree(owner,repo,branch,path)}
 @router.get("/file")
-async def file(owner:str,repo:str,branch:str,path:str,token=Depends(github_token)): return await GitHubService(token).file(owner,repo,branch,path)
+async def file(owner:str,repo:str,branch:str,path:str,token=Depends(github_token)):
+ if re.search(r'(^|/)(\.env(?:\..*)?|credentials|secrets?|id_rsa|id_ed25519)(/|$)|\.(pem|key|p12|pfx)$',path,re.I):
+  raise BatonError('Credential files cannot be displayed.',403,'sensitive_source_path')
+ return await GitHubService(token).file(owner,repo,branch,path)

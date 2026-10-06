@@ -1,6 +1,6 @@
 import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2, Radar, GitBranch } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { ConflictResult } from '@/types';
@@ -28,16 +28,24 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
 
   const [liveLaneFiles, setLiveLaneFiles] = useState<Record<string, string[]>>({});
 
+  const epoch = useRef(0);
+  useEffect(() => {
+    epoch.current++; setConflictState('idle'); setResult(null); setError(null);
+    const requestEpoch = epoch;
+    return () => { requestEpoch.current++; };
+  }, [state.repo, state.selectedBranch, state.githubToken, state.batonAccessKey, branchesInput]);
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleDetect = async () => {
-    const branchNames = branchesInput.split('\n').map((b) => b.trim()).filter(Boolean);
+    const branchNames = [...new Set(branchesInput.split('\n').map((b) => b.trim()).filter(Boolean))];
     if (branchNames.length < 2) return;
+    const current = ++epoch.current;
     setConflictState('loading');
     setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
+        if (current !== epoch.current) return;
         setResult(DEMO_CONFLICTS);
         setConflictState('success');
       }, 1200);
@@ -53,10 +61,12 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
         }
       }
       const res = await batonApi.detectConflicts(branchFiles, [], state.githubToken || undefined);
+      if (current !== epoch.current) return;
       setLiveLaneFiles(branchFiles);
       setResult(res);
       setConflictState('success');
     } catch (err) {
+      if (current !== epoch.current) return;
       setConflictState('error');
       setError(err instanceof Error ? err : new Error('Conflict detection failed'));
     }
@@ -76,7 +86,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
     );
   }
 
-  const branchNames = branchesInput.split('\n').map((b) => b.trim()).filter(Boolean);
+  const branchNames = [...new Set(branchesInput.split('\n').map((b) => b.trim()).filter(Boolean))];
   const laneFiles = state.isDemoMode ? DEMO_LANE_FILES : liveLaneFiles;
 
   return (
@@ -225,7 +235,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
                       </div>
                       <p className="text-sm text-baton-text-tertiary">{conflict.reason}</p>
                       <p className="text-xs text-baton-text-tertiary mt-2">
-                        Both branches are touching this file. Talk before you push further.
+                        This file exists in both inventories. Compare commit changes before deciding whether coordination is needed.
                       </p>
                     </div>
                   </div>

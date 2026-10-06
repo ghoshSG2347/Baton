@@ -59,12 +59,17 @@ def compare(frontend: dict, backend: dict) -> dict:
             if endpoint:
                 target.append(endpoint)
 
-    frontend_keys = {_endpoint_key(item) for item in fe_endpoints}
-    backend_keys = {_endpoint_key(item) for item in be_endpoints}
+    def matches(left, right):
+        # Legacy unqualified paths have unknown methods. Explicit methods must agree.
+        a, b = _endpoint_key(left), _endpoint_key(right)
+        if a == b:
+            return True
+        return (a.split(' ', 1)[-1] == b.split(' ', 1)[-1]
+                and (' ' not in a or ' ' not in b))
 
-    unmatched_fe = sorted({item for item in fe_endpoints if _endpoint_key(item) not in backend_keys})
-    unmatched_be = sorted({item for item in be_endpoints if _endpoint_key(item) not in frontend_keys})
-    compatible = frontend_keys <= backend_keys if frontend_keys else frontend_keys == backend_keys
+    unmatched_fe = sorted({item for item in fe_endpoints if not any(matches(item, route) for route in be_endpoints)})
+    unmatched_be = sorted({item for item in be_endpoints if not any(matches(item, call) for call in fe_endpoints)})
+    compatible = not unmatched_fe if fe_endpoints and be_endpoints else None
 
     return {
         "frontend_routes": sorted(fe_endpoints),
@@ -72,6 +77,7 @@ def compare(frontend: dict, backend: dict) -> dict:
         "unmatched_frontend_routes": unmatched_fe,
         "unmatched_backend_routes": unmatched_be,
         "compatible": compatible,
+        "evidence_status": "detected" if fe_endpoints and be_endpoints else "insufficient",
     }
 
 
@@ -80,7 +86,7 @@ def _endpoint_key(endpoint: str) -> str:
         return ""
     match = re.match(r"^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(.*)$", endpoint.strip(), re.I)
     if match:
-        return match.group(2).strip()
+        return f'{match.group(1).upper()} {match.group(2).strip()}'
     return endpoint.strip()
 
 
@@ -99,5 +105,6 @@ def _compare_canonical(frontend, backend):
         'backend_routes': sorted({label(e) for e in endpoints}),
         'unmatched_frontend_routes': sorted(set(unmatched_calls)),
         'unmatched_backend_routes': sorted(set(unmatched_endpoints)),
-        'compatible': not unmatched_calls,
+        'compatible': not unmatched_calls if consumers and endpoints else None,
+        'evidence_status': 'detected' if consumers and endpoints else 'insufficient',
     }

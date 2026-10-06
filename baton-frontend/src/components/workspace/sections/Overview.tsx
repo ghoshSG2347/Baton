@@ -1,3 +1,8 @@
+import { useEffect, useState } from 'react';
+import { batonApi } from '@/lib/api/batonApi';
+import { snapshotState } from '@/lib/workspaceStatus';
+import { ErrorStatus } from '@/components/ui/StatusPanel';
+import type { WorkspaceInspection } from '@/types';
 import { motion } from 'framer-motion';
 import { GitBranch, FileCode, Database, Activity } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
@@ -11,6 +16,20 @@ interface OverviewProps {
 }
 
 export function Overview({ state, onConnectRepo }: OverviewProps) {
+  const [inspection, setInspection] = useState<WorkspaceInspection | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  useEffect(() => {
+    let active = true;
+    setInspection(null); setError(null);
+    if (state.repo && !state.isDemoMode) {
+      batonApi.inspectWorkspace({ owner: state.repo.owner, repo: state.repo.repository, branch: state.selectedBranch || 'main', folder: state.selectedFolder, context_type: 'project', constraints: [] }, state.githubToken || undefined)
+        .then((result) => { if (active) setInspection(result); })
+        .catch((cause) => { if (active) setError(cause instanceof Error ? cause : new Error('Overview could not be loaded.')); });
+    }
+    return () => { active = false; };
+  }, [state.repo, state.isDemoMode, state.selectedBranch, state.selectedFolder, state.githubToken, state.batonAccessKey, state.analysisRevision]);
+  const status = inspection && state.repo ? snapshotState(inspection, { owner: state.repo.owner, repo: state.repo.repository, branch: state.selectedBranch || 'main', folder: state.selectedFolder, context_type: 'project', constraints: [] }) : 'CHECKING';
+  const activities = state.isDemoMode ? DEMO_ACTIVITIES : inspection?.identity.analysis_timestamp ? [{ time: new Date(inspection.identity.analysis_timestamp).toLocaleTimeString(), type: 'info', event: `Snapshot ${inspection.identity.commit.slice(0, 12)} analyzed. ${inspection.completeness.files_omitted} files omitted.` }] : [];
   const hasRepo = state.repo || state.isDemoMode;
 
   if (!hasRepo) {
@@ -39,9 +58,9 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
   const stats = [
     { label: 'REPOSITORY', value: state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'baton/demo-project', status: 'connected' as const, icon: GitBranch },
     { label: 'BRANCH', value: state.selectedBranch || 'main', status: 'connected' as const, icon: GitBranch },
-    { label: 'ANALYSIS', value: state.isDemoMode ? 'FRESH' : 'FRESH', status: 'fresh' as const, icon: Activity },
-    { label: 'FILES', value: '84', status: null, icon: FileCode },
-    { label: 'CONTEXT', value: '3.2K TOKENS', status: null, icon: Database },
+    { label: 'ANALYSIS', value: state.isDemoMode ? 'DEMO' : error ? 'REQUEST FAILED' : status, status: null, icon: Activity },
+    { label: 'FILES', value: state.isDemoMode ? '84 (DEMO)' : inspection?.available ? String(inspection.completeness.files_analyzed) : 'Unknown', status: null, icon: FileCode },
+    { label: 'CONTEXT', value: state.isDemoMode ? '3.2K (DEMO)' : inspection?.estimated_tokens !== undefined ? `${inspection.estimated_tokens} EST. TOKENS` : 'Unknown', status: null, icon: Database },
   ];
 
   return (
@@ -50,6 +69,7 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
       <h1 className="text-3xl font-bold tracking-tight mb-2">Overview</h1>
       <p className="text-sm text-baton-text-tertiary mb-8">Live understanding of the project.</p>
 
+      {error && <ErrorStatus error={error} operation="inspect" />}
       {/* Status rail */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-baton-border mb-8">
         {stats.map((stat, i) => {
@@ -77,7 +97,7 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
       <Panel label="PROJECT STATE" className="mb-8">
         <div className="p-8">
           <div className="flex items-center justify-center gap-12">
-            {['Frontend', 'Backend', 'Shared'].map((node, i) => (
+            {(state.isDemoMode ? ['Frontend', 'Backend', 'Shared'] : ['Repository', state.selectedBranch || 'main', status]).map((node, i) => (
               <div key={node} className="relative flex flex-col items-center">
                 <motion.div
                   initial={{ scale: 0 }}
@@ -102,10 +122,12 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
         </div>
       </Panel>
 
+      {inspection && <Panel label="SNAPSHOT IDENTITY" className="mb-8"><div className="p-4 font-mono text-xs break-all">Snapshot commit: {inspection.identity.commit || 'Not analyzed'}<br />Current HEAD: {inspection.identity.current_head || 'Unknown'}<br />Coverage: {inspection.completeness.status}; omitted: {inspection.completeness.files_omitted}</div></Panel>}
       {/* Recent activity */}
       <Panel label="RECENT ACTIVITY">
         <div className="divide-y divide-baton-border">
-          {DEMO_ACTIVITIES.map((activity, i) => (
+          {!activities.length && <p className="p-4 text-sm text-baton-text-tertiary">No analyzed snapshot activity available.</p>}
+          {activities.map((activity, i) => (
             <motion.div
               key={i}
               initial={{ opacity: 0, x: -10 }}

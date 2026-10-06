@@ -43,7 +43,7 @@ class GeminiProvider:
     async def select(self, packet):
         settings = get_settings()
         if not settings.gemini_api_key.get_secret_value() or not settings.gemini_model:
-            raise BatonError('AI is not configured. Set GEMINI_API_KEY and GEMINI_MODEL in the backend deployment environment.', 503)
+            raise BatonError('AI is not configured. Set GEMINI_API_KEY and GEMINI_MODEL in the backend deployment environment.', 503, 'ai_configuration_incomplete')
         payload = {
             'systemInstruction': {'parts': [{'text': SYSTEM}]},
             'contents': [{'role': 'user', 'parts': [{'text': json.dumps(packet, ensure_ascii=False)}]}],
@@ -53,7 +53,7 @@ class GeminiProvider:
         }
         # Never retry billable requests silently. Concurrency and time are bounded.
         if _CAPACITY.locked():
-            raise BatonError('AI is busy. Retry shortly.', 429)
+            raise BatonError('AI is busy. Retry shortly.', 429, 'ai_provider_busy')
         async with _CAPACITY:
             try:
                 async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds,
@@ -62,14 +62,14 @@ class GeminiProvider:
                         f'https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent',
                         headers={'x-goog-api-key': settings.gemini_api_key.get_secret_value()}, json=payload)
             except httpx.TimeoutException:
-                raise BatonError('AI provider timed out. Repository intelligence remains available. Retry the request.', 504) from None
+                raise BatonError('AI provider timed out. Repository intelligence remains available. Retry the request.', 504, 'ai_provider_timeout') from None
             except httpx.HTTPError:
-                raise BatonError('AI provider could not be reached.', 502) from None
+                raise BatonError('AI provider could not be reached.', 502, 'ai_provider_network_failure') from None
         if response.status_code != 200:
             raise BatonError('AI provider rejected the request. Check backend provider configuration or quota.',
-                             429 if response.status_code == 429 else 502)
+                             429 if response.status_code == 429 else 502, 'ai_provider_failure')
         if len(response.content) > 100_000:
-            raise BatonError('AI provider response exceeded the allowed size.', 502)
+            raise BatonError('AI provider response exceeded the allowed size.', 502, 'ai_provider_invalid_response')
         try:
             candidate = response.json()['candidates'][0]
             if candidate.get('finishReason') != 'STOP':
@@ -77,4 +77,4 @@ class GeminiProvider:
             output = ''.join(part.get('text', '') for part in candidate['content']['parts'] if not part.get('thought'))
             return EvidenceSelection.model_validate_json(output)
         except (ValueError, KeyError, IndexError, TypeError, ValidationError):
-            raise BatonError('AI provider returned an invalid or incomplete grounded response.', 502) from None
+            raise BatonError('AI provider returned an invalid or incomplete grounded response.', 502, 'ai_provider_invalid_response') from None

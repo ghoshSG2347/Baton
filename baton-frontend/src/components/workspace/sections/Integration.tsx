@@ -1,6 +1,6 @@
 import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2, GitMerge, ArrowRight } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { IntegrationResult } from '@/types';
@@ -18,17 +18,25 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
   const [frontendBranch, setFrontendBranch] = useState('');
   const [backendBranch, setBackendBranch] = useState('');
 
+  const epoch = useRef(0);
+  useEffect(() => {
+    epoch.current++; setIntState('idle'); setResult(null); setError(null);
+    const requestEpoch = epoch;
+    return () => { requestEpoch.current++; };
+  }, [state.repo, state.selectedBranch, state.githubToken, state.batonAccessKey, frontendBranch, backendBranch]);
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleCheck = async () => {
     const fb = frontendBranch.trim() || (state.isDemoMode ? 'member/maya-ui' : '');
     const bb = backendBranch.trim() || (state.isDemoMode ? 'member/arjun-api' : '');
     if (!fb || !bb) return;
+    const current = ++epoch.current;
     setIntState('loading');
     setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
+        if (current !== epoch.current) return;
         setResult(DEMO_INTEGRATION);
         setIntState('success');
       }, 1500);
@@ -45,9 +53,11 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
         backendBranch,
         state.githubToken || undefined
       );
+      if (current !== epoch.current) return;
       setResult(res);
       setIntState('success');
     } catch (err) {
+      if (current !== epoch.current) return;
       setIntState('error');
       setError(err instanceof Error ? err : new Error('Integration check failed'));
     }
@@ -74,7 +84,7 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
       <SectionLabel className="mb-6">INTEGRATION</SectionLabel>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Integration</h1>
       <p className="text-sm text-baton-text-tertiary mb-8">
-        Compare frontend API calls with backend routes. Detect unmatched endpoints before they become integration bugs.
+        Compare detected API methods and paths. Static matches do not prove runtime compatibility; missing evidence cannot establish compatibility.
       </p>
 
       {/* Branch inputs */}
@@ -136,6 +146,11 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
         <ErrorStatus error={error} operation="integration" primaryAction={<Button variant="secondary" onClick={handleCheck}>Retry request</Button>} />
       )}
 
+      {result && <Panel label="COMPARISON EVIDENCE" className="mb-6"><div className="p-4 font-mono text-xs break-all">
+        Frontend: {result.frontend_metadata?.branch || frontendBranch} / {result.frontend_metadata?.commit || 'Commit unavailable'}<br />
+        Backend: {result.backend_metadata?.branch || backendBranch} / {result.backend_metadata?.commit || 'Commit unavailable'}<br />
+        Omitted files: frontend {result.frontend_metadata?.skipped_files.length ?? 'unknown'}, backend {result.backend_metadata?.skipped_files.length ?? 'unknown'}. Static method/path detection does not validate payload schemas or runtime behavior.
+      </div></Panel>}
       {/* Results */}
       {intState === 'success' && comparison && (
         <>
@@ -151,7 +166,7 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
             <div className="flex items-center gap-3">
               <StatusIndicator status={comparison.compatible ? 'connected' : 'attention'} />
               <MonoLabel variant={comparison.compatible ? 'accent' : 'warning'}>
-                {comparison.compatible ? 'INTEGRATION STATUS — READY' : 'INTEGRATION STATUS — ATTENTION REQUIRED'}
+                {comparison.compatible === null ? 'INSUFFICIENT API EVIDENCE' : comparison.compatible ? 'DETECTED CONTRACTS MATCH' : 'DETECTED CONTRACTS NEED ATTENTION'}
               </MonoLabel>
             </div>
             <span className="font-mono text-[11px] text-baton-text-tertiary">

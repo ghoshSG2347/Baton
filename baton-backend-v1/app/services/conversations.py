@@ -19,16 +19,16 @@ class ConversationStore:
         with self.lock:
             item = self.entries.get(identifier)
             if not item or item['binding'] != binding or monotonic() - item['updated'] > self.ttl:
-                raise BatonError('Conversation expired or its repository, commit, role or authorization changed. Start a new conversation.', 409)
+                raise BatonError('Conversation expired or its repository, commit, role or authorization changed. Start a new conversation.', 409, 'conversation_expired')
             return deepcopy(item)
 
     def append(self, identifier, binding, revision, question, answer):
         with self.lock:
             existing = self.load(identifier, binding) if identifier else {'revision': 0, 'turns': []}
             if existing['revision'] != revision:
-                raise BatonError('Conversation changed while answering. Retry the question.', 409)
+                raise BatonError('Conversation changed while answering. Retry the question.', 409, 'conversation_changed')
             if len(existing['turns']) >= 20:
-                raise BatonError('Conversation limit reached. Start a new conversation.', 409)
+                raise BatonError('Conversation limit reached. Start a new conversation.', 409, 'conversation_limit')
             identifier = identifier or uuid4().hex
             item = {'id': identifier, 'binding': binding, 'revision': revision + 1,
                     'updated': monotonic(), 'turns': [*existing['turns'], {'question': question, 'answer': answer}]}

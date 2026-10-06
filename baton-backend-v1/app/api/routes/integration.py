@@ -10,5 +10,5 @@ async def integration(req:IntegrationRequest,token=Depends(github_token)):
   service=AnalysisService(token)
   frontend=await service.analyze(req.owner,req.repo,req.frontend_branch)
   backend=await service.analyze(req.owner,req.repo,req.backend_branch)
-  return {"owner":req.owner,"repo":req.repo,"branch":req.branch,"status":"analyzed","comparison":compare(frontend,backend)}
+  return {"owner":req.owner,"repo":req.repo,"branch":req.branch,"status":"analyzed","comparison":compare(frontend,backend),"frontend_metadata":frontend.get("metadata"),"backend_metadata":backend.get("metadata")}
  return {"owner":req.owner,"repo":req.repo,"branch":req.branch,"status":"ready","message":"Provide frontend_branch and backend_branch to run a real integration comparison."}

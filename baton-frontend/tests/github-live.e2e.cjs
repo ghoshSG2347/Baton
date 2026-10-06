@@ -96,8 +96,17 @@ async function check(name, run) { await run(); checks.push(name); console.log('P
   const after = calls.filter(c => c.path.includes('/analysis/')).length;
   await page.getByRole('button', { name: 'Context Builder', exact: true }).click();
   const generate = page.getByRole('button', { name: /GENERATE CONTEXT/ });
+  const contextResponse = page.waitForResponse(response => response.url().endsWith('/api/v1/context') && response.request().method() === 'POST');
   await generate.click();
-  await page.getByText('GENERATED', { exact: true }).waitFor({ timeout: 60000 });
+  const contextResult = await contextResponse;
+  console.log('Live context HTTP status:', contextResult.status());
+  await page.getByText('GENERATED', { exact: true }).waitFor({ timeout: 15000 }).catch(async () => {
+    const errorPanel = await page.getByRole('alert').allTextContents();
+    console.log('Live context state:', (await page.getByText('NO CONTEXT GENERATED', { exact: true }).count()) ? 'idle' : 'pending/result/error');
+    console.log('Live context safe errors:', errorPanel.join(' ').split(token).join('[REDACTED]'));
+    console.log('Browser runtime errors:', errors);
+    throw new Error('Live context result did not render');
+  });
   await check('F: Context Builder consumes canonical snapshot without analysis POST', async () => {
     assert(calls.filter(c => c.path.includes('/analysis/')).length === after);
   });

@@ -1,6 +1,6 @@
 import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2, Download, RefreshCw } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { ContextResult } from '@/types';
@@ -23,17 +23,35 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
     purpose: '',
     targetMember: '',
     budget: '8000',
+    contextType: 'task' as 'project' | 'role' | 'task' | 'ai_handoff',
+    constraints: '',
   });
+
+  useEffect(() => { setConfig((previous) => previous.folder === state.selectedFolder ? previous : { ...previous, folder: state.selectedFolder }); }, [state.selectedFolder]);
+  const epoch = useRef(0);
+  useEffect(() => {
+    epoch.current++;
+    setCtxState('idle'); setResult(null); setMarkdown(''); setError(null);
+    const requestEpoch = epoch;
+    return () => { requestEpoch.current++; };
+  }, [state.repo, state.selectedBranch, state.selectedFolder, state.githubToken, state.batonAccessKey, state.members, state.analysisRevision, config]);
 
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleGenerate = async () => {
     if (!hasRepo) return;
+    const requestedBudget = Number(config.budget);
+    if (!Number.isInteger(requestedBudget) || requestedBudget < 256 || requestedBudget > 500000) {
+      setCtxState('error'); setError(new Error('Enter an approximate token budget between 256 and 500000. The UTF-8 byte cap is four times this value.'));
+      return;
+    }
+    const current = ++epoch.current;
     setCtxState('loading');
     setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
+        if (current !== epoch.current) return;
         setMarkdown(DEMO_CONTEXT_MARKDOWN);
         setTokens(3280);
         setOmitted([]);
@@ -56,14 +74,25 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
         state.selectedBranch || 'main',
         config.folder,
         true,
-        state.githubToken || undefined
+        state.githubToken || undefined,
+        {
+          context_type: config.contextType, task: config.purpose,
+          constraints: config.constraints.split('\n').map((item) => item.trim()).filter(Boolean),
+          max_bytes: requestedBudget * 4,
+          member: (() => {
+            const member = state.members.find((item) => item.id === config.targetMember);
+            return member ? { name: member.name, role: member.role, responsibilities: member.job ? [member.job] : [], ownership: member.folders, do_not_touch: member.do_not_touch || [], team_scope: member.team_scope || [] } : undefined;
+          })(),
+        }
       );
+      if (current !== epoch.current) return;
       setMarkdown(res.markdown);
       setTokens(res.estimated_tokens);
       setOmitted(res.omitted);
       setResult(res);
       setCtxState('success');
     } catch (err) {
+      if (current !== epoch.current) return;
       setCtxState('error');
       setError(err instanceof Error ? err : new Error('Context generation failed'));
     }
@@ -129,6 +158,7 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
                 </label>
                 <input
                   type="text"
+                  aria-label="Context folder"
                   value={config.folder}
                   onChange={(e) => setConfig({ ...config, folder: e.target.value })}
                   placeholder="/frontend"
@@ -140,6 +170,7 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
                   Purpose / Task
                 </label>
                 <textarea
+                  aria-label="Purpose / Task"
                   value={config.purpose}
                   onChange={(e) => setConfig({ ...config, purpose: e.target.value })}
                   placeholder="Backend integration handoff"
@@ -151,25 +182,30 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
                 <label className="block font-mono text-[10px] tracking-wider text-baton-text-tertiary uppercase mb-1.5">
                   Target Teammate
                 </label>
-                <input
-                  type="text"
-                  value={config.targetMember}
-                  onChange={(e) => setConfig({ ...config, targetMember: e.target.value })}
-                  placeholder="Arjun"
-                  className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2 text-sm text-baton-white placeholder:text-baton-text-tertiary outline-none"
-                />
+                <select aria-label="Target teammate" value={config.targetMember} onChange={(e) => setConfig({ ...config, targetMember: e.target.value })} className="w-full border border-baton-border bg-baton-black px-3 py-2 text-sm">
+                  <option value="">Project scope</option>
+                  {state.members.map((member) => <option key={member.id} value={member.id}>{member.name} — {member.role}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block font-mono text-[10px] tracking-wider text-baton-text-tertiary uppercase mb-1.5">
-                  Budget (tokens)
+                  Approximate token budget (4 UTF-8 bytes/token)
                 </label>
                 <input
                   type="text"
+                  aria-label="Context budget"
                   value={config.budget}
                   onChange={(e) => setConfig({ ...config, budget: e.target.value })}
                   className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2 text-sm text-baton-white outline-none font-mono"
                 />
               </div>
+              <div>
+                <MonoLabel>CONTEXT TYPE</MonoLabel>
+                <select aria-label="Context type" value={config.contextType} onChange={(e) => setConfig({ ...config, contextType: e.target.value as typeof config.contextType })} className="w-full border border-baton-border bg-baton-black px-3 py-2 text-sm">
+                  {['project', 'role', 'task', 'ai_handoff'].map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </div>
+              <textarea aria-label="Context constraints" value={config.constraints} onChange={(e) => setConfig({ ...config, constraints: e.target.value })} placeholder="Constraints, one per line" className="w-full border border-baton-border bg-baton-black px-3 py-2 text-sm" />
               <Button
                 variant="primary"
                 onClick={handleGenerate}
@@ -233,9 +269,8 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
                 </div>
                 <TelemetryLine active />
                 <div className="mt-4 font-mono text-[11px] text-baton-text-tertiary space-y-1">
-                  <div>Analyzing branch files...</div>
-                  <div>Extracting routes and API calls...</div>
-                  <div>Detecting types and mock data...</div>
+                  <div>Loading the analyzed snapshot...</div>
+                  <div>Applying task, member boundaries and byte budget...</div>
                   <div>Formatting Markdown context...</div>
                   <div>Estimating token count...</div>
                 </div>
@@ -273,15 +308,15 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
               <div className="border-b border-baton-border px-4 py-2 grid grid-cols-2 md:grid-cols-3 gap-2">
                 <div>
                   <span className="font-mono text-[9px] text-baton-text-tertiary uppercase">BRANCH</span>
-                  <div className="font-mono text-[11px] text-baton-text-highlight">{state.selectedBranch || 'main'}</div>
+                  <div className="font-mono text-[11px] text-baton-text-highlight">{result?.context?.identity.branch || 'Demo'}</div>
                 </div>
                 <div>
                   <span className="font-mono text-[9px] text-baton-text-tertiary uppercase">COMMIT</span>
-                  <div className="font-mono text-[11px] text-baton-text-highlight">{result ? shortSha(result.markdown.match(/commit[:\s]+([a-f0-9]+)/i)?.[1] || '') : 'a1b2c3d'}</div>
+                  <div className="font-mono text-[11px] text-baton-text-highlight">{shortSha(result?.context?.identity.commit || '') || 'Demo'}</div>
                 </div>
                 <div>
                   <span className="font-mono text-[9px] text-baton-text-tertiary uppercase">GENERATED</span>
-                  <div className="font-mono text-[11px] text-baton-text-highlight">{formatTimestamp(new Date().toISOString())}</div>
+                  <div className="font-mono text-[11px] text-baton-text-highlight">{result?.context?.identity.generated_at ? formatTimestamp(result.context.identity.generated_at) : state.isDemoMode ? 'Demo' : 'Unknown'}</div>
                 </div>
               </div>
               {/* Markdown preview */}

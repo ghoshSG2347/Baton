@@ -1,2 +1,6 @@
 from pydantic import BaseModel
-class PromptRequest(BaseModel): task: str; context: str = ""; constraints: list[str] = []
+class PromptRequest(BaseModel):
+    task: str
+    context: str = ""
+    constraints: list[str] = []
+    repository: str = "User-supplied project"

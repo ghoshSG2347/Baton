@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
-import { UserPlus, Trash2, GitBranch, Folder, Users } from 'lucide-react';
+import { UserPlus, Pencil, Trash2, GitBranch, Folder, Users } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { TeamMember } from '@/types';
 import { Button, MonoLabel, Panel, SectionLabel } from '@/components/ui/primitives';
@@ -8,6 +8,7 @@ import { DEMO_MEMBERS } from '@/lib/demo';
 import { generateId } from '@/lib/utils';
 
 export function Team({ state }: { state: WorkspaceStateHook }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '', doNotTouch: '', teamScope: '',
@@ -18,7 +19,7 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
   const handleAdd = () => {
     if (!formData.name.trim()) return;
     const member: TeamMember = {
-      id: generateId(),
+      id: editingId || generateId(),
       name: formData.name,
       github: formData.github,
       branch: formData.branch,
@@ -30,7 +31,9 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
       do_not_touch: formData.doNotTouch.split(',').map((p) => p.trim()).filter(Boolean),
       team_scope: formData.teamScope.split(',').map((p) => p.trim()).filter(Boolean),
     };
-    state.addMember(member);
+    if (editingId) state.setMembers((previous) => previous.map((item) => item.id === editingId ? member : item));
+    else state.addMember(member);
+    setEditingId(null);
     setFormData({ name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '', doNotTouch: '', teamScope: '' });
     setShowForm(false);
   };
@@ -48,11 +51,11 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
 
       {/* Actions */}
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="primary" onClick={() => setShowForm(!showForm)}>
+        <Button variant="primary" onClick={() => { setEditingId(null); setFormData({ name: '', github: '', branch: '', role: '', folders: '', job: '', dependsOn: '', providesTo: '', doNotTouch: '', teamScope: '' }); setShowForm(true); }}>
           <UserPlus size={14} />
           ADD MEMBER
         </Button>
-        {members.length === 0 && (
+        {members.length === 0 && !state.repo && (
           <Button variant="secondary" onClick={handleLoadDemo}>
             LOAD DEMO TEAM
           </Button>
@@ -71,7 +74,7 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
           animate={{ opacity: 1, height: 'auto' }}
           exit={{ opacity: 0, height: 0 }}
         >
-          <Panel label="NEW MEMBER" className="mb-6">
+          <Panel label={editingId ? "EDIT MEMBER" : "NEW MEMBER"} className="mb-6">
             <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
               {[
                 { key: 'name', label: 'Member Name', placeholder: 'Maya' },
@@ -91,6 +94,7 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
                   </label>
                   <input
                     type="text"
+                    aria-label={field.label}
                     value={formData[field.key as keyof typeof formData]}
                     onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
                     placeholder={field.placeholder}
@@ -141,12 +145,18 @@ export function Team({ state }: { state: WorkspaceStateHook }) {
                       <MonoLabel>{member.role}</MonoLabel>
                     </div>
                     {!state.isDemoMode && (
-                      <button
+                      <div className="flex gap-3">
+                      <button aria-label={`Edit ${member.name}`} onClick={() => {
+                        setEditingId(member.id);
+                        setFormData({ name: member.name, github: member.github, branch: member.branch, role: member.role, folders: member.folders.join(', '), job: member.job, dependsOn: member.depends_on.join(', '), providesTo: member.provides_to.join(', '), doNotTouch: (member.do_not_touch || []).join(', '), teamScope: (member.team_scope || []).join(', ') });
+                        setShowForm(true);
+                      }}><Pencil size={14} /></button>
+                      <button aria-label={`Delete ${member.name}`}
                         onClick={() => state.removeMember(member.id)}
                         className="text-baton-text-tertiary hover:text-baton-warning transition-colors"
                       >
                         <Trash2 size={14} />
-                      </button>
+                      </button></div>
                     )}
                   </div>
 

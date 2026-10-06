@@ -13,6 +13,7 @@ from urllib.parse import quote
 from app.core.config import get_settings
 from app.core.exceptions import BatonError
 from app.utils.text_utils import language_for
+from app.intelligence.safety import sensitive_path
 
 class GitHubService:
     # Authorization-scoped, short-lived HEAD/metadata observations. These are
@@ -154,16 +155,22 @@ class GitHubService:
         if not repo or repo in (".", "..") or owner in (".", ".."):
             raise BatonError("Invalid repository URL. Use https://github.com/owner/repository.", 400, "invalid_repository_url")
         return owner, repo
-    async def repository(self,owner,repo): return await self.observed(f"/repos/{owner}/{repo}")
-    async def branches(self,owner,repo): return await self.observed(f"/repos/{owner}/{repo}/branches",params={"per_page":100})
+    async def repository(self,owner,repo):
+        self.validate_repo_url(f"https://github.com/{owner}/{repo}")
+        return await self.observed(f"/repos/{owner}/{repo}")
+    async def branches(self,owner,repo):
+        self.validate_repo_url(f"https://github.com/{owner}/{repo}")
+        return await self.observed(f"/repos/{owner}/{repo}/branches",params={"per_page":100})
     async def tree(self,owner,repo,branch,path=""):
         data=await self.tree_snapshot(owner,repo,branch)
         prefix=path.strip("/")
         return [x for x in data.get("tree",[]) if not prefix or x.get("path","")==prefix or x.get("path","").startswith(prefix+"/")]
     async def tree_snapshot(self,owner,repo,branch):
+        self.validate_repo_url(f"https://github.com/{owner}/{repo}")
         ref=branch or "HEAD"
         return await self.observed(f"/repos/{owner}/{repo}/git/trees/{quote(ref, safe='')}",params={"recursive":"1"})
     async def commit(self,owner,repo,branch,*,fresh=False):
+        self.validate_repo_url(f"https://github.com/{owner}/{repo}")
         return await self.observed(f"/repos/{owner}/{repo}/commits/{quote(branch or 'HEAD', safe='')}",fresh=fresh)
 
     async def access(self):
@@ -187,6 +194,11 @@ class GitHubService:
         result = await asyncio.shield(self._pending[loop_key])
         return {**deepcopy(result), 'token_source': self.token_source}
     async def file(self,owner,repo,branch,path):
+        self.validate_repo_url(f'https://github.com/{owner}/{repo}')
+        if not path or path.startswith(('/', '\\')) or '\\' in path or any(part in ('', '.', '..') for part in path.split('/')):
+            raise BatonError('Invalid repository file path.', 422, 'invalid_source_path')
+        if sensitive_path(path):
+            raise BatonError('Credential files cannot be displayed.', 403, 'sensitive_source_path')
         path = path.lstrip('/')
         key = (owner.lower(), repo.lower(), branch, path)
         if key in self._content:

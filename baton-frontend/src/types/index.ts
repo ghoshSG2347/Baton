@@ -57,6 +57,7 @@ export interface AnalysisResult {
 
 export interface ContextResult {
   analysis: AnalysisResult;
+  context?: { identity: SnapshotIdentity };
   markdown: string;
   estimated_tokens: number;
   omitted: string[];
@@ -82,7 +83,8 @@ export interface IntegrationComparison {
   backend_routes: string[];
   unmatched_frontend_routes: string[];
   unmatched_backend_routes: string[];
-  compatible: boolean;
+  compatible: boolean | null;
+  evidence_status?: 'detected' | 'insufficient';
 }
 
 export interface IntegrationResult {
@@ -91,6 +93,8 @@ export interface IntegrationResult {
   branch: string;
   status: string;
   comparison?: IntegrationComparison;
+  frontend_metadata?: AnalysisMetadata;
+  backend_metadata?: AnalysisMetadata;
   message?: string;
 }
 
@@ -139,7 +143,7 @@ export interface SnapshotIdentity {
   repository: string; branch: string; commit: string; project_root: string;
   snapshot_id: string; analysis_timestamp: string; snapshot_status: string;
   context_type: string; context_version: string;
-  current_head?: string | null;
+  current_head?: string | null; generated_at?: string;
 }
 export interface EvidenceRecord { id: string; text: string; source_paths: string[]; section?: string }
 export interface ContextCoverage {
@@ -147,7 +151,7 @@ export interface ContextCoverage {
   files_omitted: number; critical_files_omitted: number; budget_omitted_blocks: number;
 }
 export interface WorkspaceInspection {
-  available?: boolean; warnings?: string[];
+  available?: boolean; warnings?: string[]; estimated_tokens?: number;
   state?: 'READY' | 'NOT_ANALYZED' | 'STALE' | 'SNAPSHOT_INVALID' | 'EMPTY_REPOSITORY';
   project_types?: string[];
   identity: SnapshotIdentity; completeness: ContextCoverage; markdown: string;

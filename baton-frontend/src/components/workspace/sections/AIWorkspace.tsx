@@ -174,7 +174,9 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     } catch (err) {
       if (current === epoch.current && !abort.signal.aborted) {
         setError({ cause: err, operation: 'chat' }); setMessage(safeQuestion);
-        if (err instanceof BatonApiError && (err.status === 409 || err.code.startsWith('snapshot_'))) {
+        if (err instanceof BatonApiError && ['conversation_expired', 'conversation_limit'].includes(err.code)) {
+          setConversationId(undefined); setTurns([]);
+        } else if (err instanceof BatonApiError && (err.code.startsWith('snapshot_') || (err.status === 409 && err.code === 'baton_backend_failure'))) {
           setInspection(null);
           try {
             const result = await batonApi.inspectWorkspace({ ...request, commit: undefined, continue_snapshot: false }, state.githubToken || undefined);
@@ -208,7 +210,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     <header className="ai-toolbar">
       <div><SectionLabel>Development workspace</SectionLabel><h1>Ask Baton <span className={`ai-grounding ${ready ? '' : 'ai-grounding-muted'}`}>{headerLabel}</span></h1></div>
       <div className="ai-toolbar-actions">
-        <button onClick={() => { controller.current?.abort(); epoch.current++; setTurns([]); setConversationId(undefined); setPendingQuestion(''); setError((previous) => previous && ['inspect', 'analysis'].includes(previous.operation) ? previous : null); setBusy(null); }} disabled={busy !== null && busy !== 'chat'}><Plus size={15} /> New chat</button>
+        <button onClick={() => { controller.current?.abort(); epoch.current++; setMessage(''); setTurns([]); setConversationId(undefined); setPendingQuestion(''); setError((previous) => previous && ['inspect', 'analysis'].includes(previous.operation) ? previous : null); setBusy(null); }} disabled={busy !== null && busy !== 'chat'}><Plus size={15} /> New chat</button>
         <button onClick={() => setPanelOpen((value) => !value)} aria-label={panelOpen ? 'Hide evidence panel' : 'Show evidence panel'}>{panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
       </div>
     </header>

@@ -22,6 +22,6 @@ export function StatusPanel({ severity = 'info', title, explanation, technicalDe
 export function ErrorStatus({ error, operation, primaryAction, secondaryAction }: { error: unknown; operation?: string; primaryAction?: ReactNode; secondaryAction?: ReactNode }) {
   const blocked = useRetryBackoff(error);
   const message = requestFailure(error, operation);
-  const details = error instanceof BatonApiError ? `HTTP ${error.status || 'unavailable'} · ${error.code}\n${error.message}` : undefined;
+  const details = error instanceof BatonApiError ? `HTTP ${error.status || 'unavailable'} · ${error.code}\n${error.message}` : error instanceof Error ? redactUserText(error.message) : undefined;
   return <StatusPanel {...message} technicalDetails={details} primaryAction={primaryAction && <fieldset disabled={blocked}>{primaryAction}</fieldset>} secondaryAction={secondaryAction} />;
 }

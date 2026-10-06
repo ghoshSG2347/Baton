@@ -1,5 +1,5 @@
 import { ErrorStatus } from '@/components/ui/StatusPanel';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2, Download, RotateCcw } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import { batonApi } from '@/lib/api/batonApi';
@@ -24,6 +24,8 @@ When the task is complete, provide a concise Handoff containing:
 - any important assumptions.`;
 
 export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
+  const [grounding, setGrounding] = useState<'canonical' | 'manual'>('canonical');
+  const epoch = useRef(0);
   const [mode, setMode] = useState<PromptMode>('chat-first');
   const [promptState, setPromptState] = useState<PromptState>('idle');
   const [generatedPrompt, setGeneratedPrompt] = useState('');
@@ -36,8 +38,15 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
     targetMember: '',
   });
 
+  useEffect(() => {
+    epoch.current++; setGeneratedPrompt(''); setPromptState('idle'); setError(null);
+    const requestEpoch = epoch;
+    return () => { requestEpoch.current++; };
+  }, [state.repo, state.selectedBranch, state.selectedFolder, state.members, state.githubToken, state.batonAccessKey, state.analysisRevision, grounding, mode, form]);
+
   const handleGenerate = async () => {
     if (!form.task.trim()) return;
+    const current = ++epoch.current;
     setPromptState('loading');
     setError(null);
 
@@ -49,10 +58,12 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
     if (form.ownership) {
       constraints.push(`Only edit files inside your owned folders: ${form.ownership}`);
     }
+    if (form.targetMember) constraints.push(`Target teammate: ${state.members.find((item) => item.id === form.targetMember)?.name || form.targetMember}`);
     constraints.push('State assumptions before implementing uncertain behavior.');
 
     if (state.isDemoMode) {
       setTimeout(() => {
+        if (current !== epoch.current) return;
         const prompt = mode === 'chat-first'
           ? `## Planning AI Instructions\n\nYou are helping plan a coding task for an AI coding agent.\n\n### Task\n${form.task}\n\n### Context\n${form.context || 'See Baton context packet.'}\n\n### Constraints\n${constraints.map((c) => `- ${c}`).join('\n')}\n\n### Ownership\n${form.ownership || 'No ownership boundaries configured.'}\n\n### Target Teammate\n${form.targetMember || 'Not specified'}\n\nGenerate a focused coding prompt for the AI coding agent (Antigravity / Cursor).\nThe prompt should include all necessary context for implementation.\n\n---\n\n### Starter Instructions\n\n${STARTER_PROMPT}`
           : `You are working on the Baton repository.\n\nTask:\n${form.task}\n\nConstraints:\n${constraints.map((c) => `- ${c}`).join('\n')}\n\nRepository context:\n${form.context || 'No additional context provided.'}\n\nOwnership:\n${form.ownership || 'No ownership boundaries configured.'}\n\nTarget:\n${form.targetMember || 'Not specified'}\n\n---\n\n${STARTER_PROMPT}`;
@@ -63,13 +74,24 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
     }
 
     try {
-      const res = await batonApi.generatePrompt(form.task, form.context, constraints, state.githubToken || undefined);
+      let prompt: string;
+      if (grounding === 'canonical') {
+        if (!state.repo) throw new Error('Connect and analyze a repository, or select Manual input.');
+        const member = state.members.find((item) => item.id === form.targetMember);
+        const artifact = await batonApi.artifact({ owner: state.repo.owner, repo: state.repo.repository, branch: state.selectedBranch || 'main', folder: state.selectedFolder, context_type: 'ai_handoff', artifact_type: 'prompt', task: form.task, constraints: [...constraints, ...(form.context ? [`User-supplied context (unverified): ${form.context}`] : [])], member: member || form.ownership ? { name: member?.name, role: member?.role, responsibilities: member?.job ? [member.job] : [], ownership: member ? member.folders : form.ownership.split(',').map((item) => item.trim()).filter(Boolean), do_not_touch: member?.do_not_touch || [], team_scope: member?.team_scope || [] } : undefined, target: 'Codex' }, state.githubToken || undefined);
+        prompt = artifact.content;
+      } else {
+        const res = await batonApi.generatePrompt(form.task, form.context, constraints, state.githubToken || undefined, state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'User-supplied project');
+        prompt = res.prompt;
+      }
+      if (current !== epoch.current) return;
       const fullPrompt = mode === 'chat-first'
-        ? `## Planning AI Instructions\n\n${res.prompt}\n\n---\n\n### Starter Instructions\n\n${STARTER_PROMPT}`
-        : `${res.prompt}\n\n---\n\n${STARTER_PROMPT}`;
+        ? `## Planning AI Instructions\n\n${prompt}\n\n---\n\n### Starter Instructions\n\n${STARTER_PROMPT}`
+        : `${prompt}\n\n---\n\n${STARTER_PROMPT}`;
       setGeneratedPrompt(fullPrompt);
       setPromptState('success');
     } catch (err) {
+      if (current !== epoch.current) return;
       setPromptState('error');
       setError(err instanceof Error ? err : new Error('Prompt generation failed'));
     }
@@ -99,6 +121,10 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
         Baton hands the baton to the coding agent. The external AI does the reasoning.
       </p>
 
+      <select aria-label="Prompt evidence source" value={grounding} onChange={(e) => setGrounding(e.target.value as typeof grounding)} className="mb-4 border border-baton-border bg-baton-black px-3 py-2 text-sm">
+        <option value="canonical">Canonical snapshot</option>
+        <option value="manual">Manual input — unverified</option>
+      </select>
       {/* Mode toggle */}
       <div className="flex items-center gap-px bg-baton-border mb-6 w-fit rounded-baton overflow-hidden">
         <button
@@ -131,6 +157,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
                   Task
                 </label>
                 <textarea
+                  aria-label="Prompt task"
                   value={form.task}
                   onChange={(e) => setForm({ ...form, task: e.target.value })}
                   placeholder="Implement user authentication endpoint in FastAPI"
@@ -143,6 +170,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
                   Context
                 </label>
                 <textarea
+                  aria-label="Prompt context"
                   value={form.context}
                   onChange={(e) => setForm({ ...form, context: e.target.value })}
                   placeholder="Paste Baton context or reference the context.md file..."
@@ -155,6 +183,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
                   Constraints (one per line)
                 </label>
                 <textarea
+                  aria-label="Prompt constraints"
                   value={form.constraints}
                   onChange={(e) => setForm({ ...form, constraints: e.target.value })}
                   placeholder={"Do not modify files outside app/api/routes/auth.py\nDo not add external dependencies without approval"}
@@ -168,6 +197,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
                 </label>
                 <input
                   type="text"
+                  aria-label="Prompt ownership"
                   value={form.ownership}
                   onChange={(e) => setForm({ ...form, ownership: e.target.value })}
                   placeholder="/backend, /api"
@@ -178,13 +208,10 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
                 <label className="block font-mono text-[10px] tracking-wider text-baton-text-tertiary uppercase mb-1.5">
                   Target Teammate
                 </label>
-                <input
-                  type="text"
-                  value={form.targetMember}
-                  onChange={(e) => setForm({ ...form, targetMember: e.target.value })}
-                  placeholder="Arjun"
-                  className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2 text-sm text-baton-white placeholder:text-baton-text-tertiary outline-none"
-                />
+                <select aria-label="Prompt teammate" value={form.targetMember} onChange={(e) => setForm({ ...form, targetMember: e.target.value })} className="w-full border border-baton-border bg-baton-black px-3 py-2 text-sm">
+                  <option value="">Project scope</option>
+                  {state.members.map((member) => <option key={member.id} value={member.id}>{member.name} — {member.role}</option>)}
+                </select>
               </div>
               <div className="flex items-center gap-3 pt-2">
                 <Button variant="primary" onClick={handleGenerate} disabled={promptState === 'loading' || !form.task.trim()}>

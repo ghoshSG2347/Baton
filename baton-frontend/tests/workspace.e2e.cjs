@@ -10,7 +10,7 @@ let browser, page;
   browser = await chromium.launch({ executablePath: process.env.BATON_BROWSER_PATH, headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   page = await context.newPage();
-  const failures = []; const calls = []; let staleMode = false;
+  const failures = []; const calls = []; let staleMode = false; let expiredMode = false;
   page.on('pageerror', error => failures.push(error.message));
   await context.route(/\/api\/(?:v1\/|health(?:$|\?))/, async route => {
     const req = route.request(); const url = new URL(req.url());
@@ -19,6 +19,7 @@ let browser, page;
     if (url.pathname.endsWith('/branches')) response = { branches: [{ name: 'main', sha: 'commit-1' }, { name: 'feature/ask-book', sha: 'commit-2' }, { name: 'missing', sha: 'unavailable' }] };
     else if (url.pathname.endsWith('/inspect')) response = body.branch === 'missing' ? fixture.unavailable : staleMode ? (body.continue_snapshot ? fixture.continued : fixture.stale) : body.branch === 'feature/ask-book' ? fixture.feature : body.member?.name ? fixture.role : fixture.project;
     else if (url.pathname.endsWith('/chat')) {
+      if (expiredMode) { await route.fulfill({ status: 409, json: { code: 'conversation_expired', detail: 'Conversation expired. Start a new conversation.' } }); return; }
       if (staleMode && !body.continue_snapshot) { await route.fulfill({ status: 409, json: { detail: 'Repository intelligence snapshot is stale; the requested commit is not the current branch state.' }, headers: { 'Access-Control-Allow-Origin': '*' } }); return; }
       response = body.message.includes('technical design') ? { ...fixture.chat_artifact, revision: 2 } : body.continue_snapshot ? fixture.continued_chat : fixture.chat;
     }
@@ -64,6 +65,30 @@ let browser, page;
   await page.getByRole('dialog', { name: 'Technical design' }).waitFor();
   await page.keyboard.press('Escape');
   await page.screenshot({ path: '.test-output/workspace-desktop.png', fullPage: true, animations: 'disabled' });
+  const chatBeforeReset = calls.filter(call => call.path.endsWith('/chat'));
+  assert(chatBeforeReset[1].body.conversation_id, 'Follow-up must send the returned conversation ID');
+  const analysesBeforeReset = calls.filter(call => call.path.includes('/analysis/')).length;
+  const inspectionsBeforeReset = calls.filter(call => call.path.endsWith('/inspect')).length;
+  await page.getByLabel('Ask about the connected repository').fill('Unsent draft');
+  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  assert.equal(await page.getByLabel('Ask about the connected repository').inputValue(), '');
+  assert.equal(await page.locator('.ai-assistant-message').count(), 0);
+  assert.equal(calls.filter(call => call.path.includes('/analysis/')).length, analysesBeforeReset);
+  assert.equal(calls.filter(call => call.path.endsWith('/inspect')).length, inspectionsBeforeReset);
+  await page.getByLabel('Ask about the connected repository').fill('Explain the API again');
+  await page.getByRole('button', { name: 'Send repository question', exact: true }).click();
+  await page.locator('.ai-assistant-message').waitFor();
+  assert.equal(calls.filter(call => call.path.endsWith('/chat')).at(-1).body.conversation_id, undefined);
+  expiredMode = true;
+  const inspectionCountBeforeExpiry = calls.filter(call => call.path.endsWith('/inspect')).length;
+  await page.getByLabel('Ask about the connected repository').fill('Follow up after session expiry');
+  await page.getByRole('button', { name: 'Send repository question', exact: true }).click();
+  await page.getByText('Chat session needs attention', { exact: true }).waitFor();
+  assert.equal(calls.filter(call => call.path.endsWith('/inspect')).length, inspectionCountBeforeExpiry);
+  assert.equal(await page.locator('.ai-assistant-message').count(), 0);
+  assert(await page.getByLabel('Ask about the connected repository').isEnabled());
+  expiredMode = false;
+  await page.getByRole('button', { name: 'New chat', exact: true }).click();
   await page.getByRole('button', { name: 'Generate artifact', exact: true }).click();
   await page.getByRole('dialog', { name: 'Repository context' }).waitFor();
   const downloadEvent = page.waitForEvent('download');
