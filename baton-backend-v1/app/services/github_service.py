@@ -36,6 +36,8 @@ class GitHubService:
                 raise BatonError("GitHub denied access. Check token permissions and organization authorization.", 403, "github_permission_failure")
             if r.status_code == 404:
                 raise BatonError("GitHub repository or resource not found, or inaccessible. Check the repository URL; for a private repository, supply a GitHub token with access.", 404, "github_not_found")
+            if r.status_code == 409 and "/commits/" in path:
+                raise BatonError("This repository has no commits to analyze yet.", 409, "empty_repository")
             raise BatonError(f"GitHub API returned HTTP {r.status_code}. Please retry or check GitHub availability.", 502, "github_api_failure")
         try:
             return r.json()

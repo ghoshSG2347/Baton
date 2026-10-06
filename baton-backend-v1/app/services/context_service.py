@@ -33,4 +33,5 @@ class ContextService:
         if not req.include_markdown:
             result['markdown'] = ''
             result['estimated_tokens'] = 0
-        return {'analysis': scrub(intelligence.to_legacy_analysis(), secrets), **result}
+        return {'analysis': scrub(intelligence.to_legacy_analysis(), secrets),
+                'project_types': [kind.value for kind in intelligence.project_types], **result}

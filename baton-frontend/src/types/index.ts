@@ -139,7 +139,7 @@ export interface SnapshotIdentity {
   repository: string; branch: string; commit: string; project_root: string;
   snapshot_id: string; analysis_timestamp: string; snapshot_status: string;
   context_type: string; context_version: string;
-  current_head?: string;
+  current_head?: string | null;
 }
 export interface EvidenceRecord { id: string; text: string; source_paths: string[]; section?: string }
 export interface ContextCoverage {
@@ -148,6 +148,8 @@ export interface ContextCoverage {
 }
 export interface WorkspaceInspection {
   available?: boolean; warnings?: string[];
+  state?: 'READY' | 'NOT_ANALYZED' | 'STALE' | 'SNAPSHOT_INVALID' | 'EMPTY_REPOSITORY';
+  project_types?: string[];
   identity: SnapshotIdentity; completeness: ContextCoverage; markdown: string;
   relevance: { editable_files: string[]; protected_files: string[]; cross_boundary_files: string[]; warnings: string[] };
   sections: { number: number; title: string; records: EvidenceRecord[] }[];

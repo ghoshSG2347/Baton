@@ -21,19 +21,21 @@ class ContextSnapshotService:
             state = await self.github.commit(owner, repo, branch)
         except BatonError as exc:
             if exc.status_code == 409:
-                raise BatonError(REFRESH_MESSAGE + ' No repository commit is available.', 409) from None
+                raise BatonError('This repository has no commits to analyze yet.', 409, 'empty_repository') from None
             raise
         current_commit = state.get('sha')
         self.current_commit = current_commit
         self.historical = bool(expected_commit and expected_commit != current_commit)
         if not current_commit or (self.historical and not allow_snapshot):
-            raise BatonError(REFRESH_MESSAGE + ' The requested commit is not the current branch state.', 409)
+            raise BatonError(REFRESH_MESSAGE + ' The requested commit is not the current branch state.', 409, 'snapshot_stale' if current_commit else 'snapshot_invalid')
         selected_commit = expected_commit if self.historical else current_commit
         intelligence = self.store.load(owner, repo, branch, selected_commit, folder.strip('/'))
         requested_key = (owner.lower(), repo.lower(), branch, selected_commit, folder.strip('/'), '1.1')
         actual_key = ((intelligence.owner.lower(), intelligence.repo.lower(), intelligence.branch,
                        intelligence.commit, intelligence.project_root.strip('/'), intelligence.analysis_version)
                       if intelligence is not None else None)
-        if intelligence is None or actual_key != requested_key or intelligence.snapshot_status == SnapshotStatus.STALE:
-            raise BatonError(REFRESH_MESSAGE + ' Run the existing repository/folder analysis endpoint explicitly.', 409)
+        if intelligence is None:
+            raise BatonError(REFRESH_MESSAGE + ' Run the existing repository/folder analysis endpoint explicitly.', 409, 'snapshot_required')
+        if actual_key != requested_key or intelligence.snapshot_status == SnapshotStatus.STALE:
+            raise BatonError(REFRESH_MESSAGE + ' Snapshot identity or validity does not match the requested state.', 409, 'snapshot_invalid')
         return intelligence

@@ -102,7 +102,16 @@ async function apiRequest<T>(
 
 export const batonApi = {
   async inspectWorkspace(request: WorkspaceRequest, token?: string): Promise<WorkspaceInspection> {
-    return apiRequest('/api/v1/workspace/inspect', { method: 'POST', body: JSON.stringify(request) }, token);
+    const result = await apiRequest<WorkspaceInspection>('/api/v1/workspace/inspect', { method: 'POST', body: JSON.stringify(request) }, token);
+    const identity = result?.identity;
+    if (!identity || typeof identity.repository !== 'string' || typeof identity.branch !== 'string'
+      || typeof identity.project_root !== 'string' || typeof identity.commit !== 'string'
+      || !result.completeness || typeof result.completeness.status !== 'string'
+      || !Array.isArray(result.sections) || !Array.isArray(result.omission_manifest)
+      || typeof result.provider?.configured !== 'boolean') {
+      throw new BatonApiError('Baton backend returned an invalid analysis response.', 502, undefined, 'snapshot_invalid');
+    }
+    return result;
   },
   async chat(request: WorkspaceRequest & { message: string; conversation_id?: string }, token?: string, signal?: AbortSignal): Promise<ChatAnswer> {
     return apiRequest('/api/v1/workspace/chat', { method: 'POST', body: JSON.stringify(request), signal }, token);
@@ -141,6 +150,9 @@ export const batonApi = {
       { method: 'GET' },
       githubToken
     );
+    if (!Array.isArray(data.branches) || data.branches.some((branch) => typeof branch.name !== 'string' || typeof branch.sha !== 'string')) {
+      throw new BatonApiError('Baton backend returned an invalid branch list.', 502);
+    }
     return data.branches;
   },
 
@@ -158,6 +170,7 @@ export const batonApi = {
       { method: 'GET' },
       githubToken
     );
+    if (!Array.isArray(data.items)) throw new BatonApiError('Baton backend returned an invalid file tree.', 502);
     return data.items;
   },
 
@@ -187,7 +200,7 @@ export const batonApi = {
       '/api/v1/analysis/folder',
       {
         method: 'POST',
-        body: JSON.stringify({ owner, repo, branch, folder }),
+        body: JSON.stringify({ owner, repo, branch, folder, force_refresh: true }),
       },
       githubToken
     );
@@ -203,7 +216,7 @@ export const batonApi = {
       '/api/v1/analysis/repository',
       {
         method: 'POST',
-        body: JSON.stringify({ owner, repo, branch }),
+        body: JSON.stringify({ owner, repo, branch, force_refresh: true }),
       },
       githubToken
     );

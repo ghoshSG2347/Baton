@@ -287,7 +287,7 @@ async def test_authorization_failure_prevents_snapshot_reuse(http_status):
         await snapshots.load('example', 'project', 'main')
     assert err.value.status_code == http_status
     if http_status == 409:
-        assert REFRESH_MESSAGE in err.value.detail
+        assert err.value.code == 'empty_repository'
 
 
 def test_context_route_exposes_new_views_and_legacy_keys(monkeypatch):

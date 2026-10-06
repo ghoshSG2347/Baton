@@ -1,3 +1,4 @@
+import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { Loader2, Download, RefreshCw } from 'lucide-react';
@@ -16,7 +17,7 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
   const [markdown, setMarkdown] = useState<string>('');
   const [tokens, setTokens] = useState(0);
   const [omitted, setOmitted] = useState<string[]>([]);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error | null>(null);
   const [config, setConfig] = useState({
     folder: state.selectedFolder || '',
     purpose: '',
@@ -29,7 +30,7 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
   const handleGenerate = async () => {
     if (!hasRepo) return;
     setCtxState('loading');
-    setError('');
+    setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
@@ -64,7 +65,7 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
       setCtxState('success');
     } catch (err) {
       setCtxState('error');
-      setError(err instanceof Error ? err.message : 'Context generation failed');
+      setError(err instanceof Error ? err : new Error('Context generation failed'));
     }
   };
 
@@ -243,14 +244,8 @@ export function ContextBuilder({ state }: { state: WorkspaceStateHook }) {
           )}
 
           {ctxState === 'error' && (
-            <Panel label="ERROR">
-              <div className="p-8 text-center">
-                <p className="text-sm text-baton-warning mb-2">CONTEXT GENERATION FAILED</p>
-                <p className="text-xs text-baton-text-tertiary mb-4">{error}</p>
-                <Button variant="secondary" onClick={handleGenerate}>RETRY</Button>
-              </div>
-            </Panel>
-          )}
+        <ErrorStatus error={error} operation="context" primaryAction={<Button variant="secondary" onClick={handleGenerate}>Retry request</Button>} />
+      )}
 
           {ctxState === 'success' && (
             <Panel>

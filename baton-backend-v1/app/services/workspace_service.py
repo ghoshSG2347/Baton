@@ -56,27 +56,48 @@ class WorkspaceService:
                 raise
             snapshots = self.contexts.snapshots or ContextSnapshotService(token)
             branch = req.branch or (await snapshots.github.repository(req.owner, req.repo)).get('default_branch', 'HEAD')
-            state = await snapshots.github.commit(req.owner, req.repo, branch)
-            head = state.get('sha')
+            head = None
+            empty = exc.code == 'empty_repository'
+            if not empty:
+                try:
+                    state = await snapshots.github.commit(req.owner, req.repo, branch)
+                    head = state.get('sha')
+                except BatonError as head_error:
+                    if head_error.status_code != 409:
+                        raise
+                    empty = True
             matches = [m for m in snapshots.store.metadata() if
                        (m['owner'].lower(), m['repo'].lower(), m['branch'], m['folder']) ==
                        (req.owner.lower(), req.repo.lower(), branch, req.folder.strip('/'))]
             latest = matches[-1] if matches else None
-            METRICS.info('snapshot_miss stored_snapshot=%s', bool(latest))
-            return scrub({'available': False, 'identity': {'repository': f'{req.owner}/{req.repo}',
-                          'branch': branch, 'commit': latest['commit'] if latest else '',
-                          'current_head': head, 'snapshot_status': 'STALE' if latest else 'UNAVAILABLE',
-                          'analysis_timestamp': latest['generated'] if latest else '', 'project_root': req.folder},
-                          'warnings': ['Repository changed since the current intelligence snapshot.' if latest else
-                                       'The selected branch does not currently have a valid repository intelligence snapshot.'],
-                          'markdown': '', 'sections': [], 'completeness': {'status': 'UNKNOWN'},
+            status = ('EMPTY_REPOSITORY' if empty else 'SNAPSHOT_INVALID' if not head or
+                      exc.code == 'snapshot_invalid' or (latest and latest['commit'] == head)
+                      else 'STALE' if latest else 'NOT_ANALYZED')
+            explanations = {
+                'EMPTY_REPOSITORY': 'This repository has no commits to analyze yet.',
+                'SNAPSHOT_INVALID': 'The stored analysis could not be validated for this branch.',
+                'STALE': 'The branch changed after its last analysis.',
+                'NOT_ANALYZED': 'Analyze this branch to create its first repository context.',
+            }
+            METRICS.info('snapshot_miss stored_snapshot=%s state=%s', bool(latest), status)
+            return scrub({'available': False, 'state': status, 'identity': {'repository': f'{req.owner}/{req.repo}',
+                          'branch': branch, 'commit': latest['commit'] if latest and not empty else '',
+                          'current_head': head, 'snapshot_status': status,
+                          'snapshot_id': '', 'context_type': req.context_type, 'context_version': '2.0',
+                          'analysis_timestamp': latest['generated'] if latest and not empty else '', 'project_root': req.folder.strip('/')},
+                          'warnings': [explanations[status]],
+                          'markdown': '', 'sections': [], 'completeness': {'status': 'UNKNOWN',
+                          'files_discovered': 0, 'files_analyzed': 0, 'files_omitted': 0,
+                          'critical_files_omitted': 0, 'budget_omitted_blocks': 0},
                           'relevance': {'editable_files': [], 'protected_files': [], 'cross_boundary_files': [], 'warnings': []},
-                          'omission_manifest': [], 'provider': {'name': 'gemini', 'configured': bool(get_settings().gemini_api_key.get_secret_value() and get_settings().gemini_model)}}, secret_values(token))
+                          'omission_manifest': [], 'project_types': [], 'provider': {'name': 'gemini', 'configured': bool(get_settings().gemini_api_key.get_secret_value() and get_settings().gemini_model and get_settings().baton_access_key)}}, secret_values(token))
         METRICS.info('snapshot_hit')
         return scrub({**data['context'], 'markdown': data['markdown'],
                       'available': True,
+                      'state': 'STALE' if data['context']['identity']['snapshot_status'] == 'STALE' else 'EMPTY_REPOSITORY' if not data['analysis']['file_tree'] else 'READY',
+                      'project_types': data.get('project_types', []),
                       'estimated_tokens': data['estimated_tokens'],
-                      'provider': {'name': 'gemini', 'configured': bool(get_settings().gemini_api_key.get_secret_value() and get_settings().gemini_model)}}, secret_values(token))
+                      'provider': {'name': 'gemini', 'configured': bool(get_settings().gemini_api_key.get_secret_value() and get_settings().gemini_model and get_settings().baton_access_key)}}, secret_values(token))
 
     async def chat(self, req, token=None):
         started = time.monotonic()

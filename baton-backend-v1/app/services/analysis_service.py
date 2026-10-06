@@ -14,10 +14,10 @@ class AnalysisService:
         self.github = GitHubService(token)
         self.store = store or snapshot._DEFAULT
 
-    async def analyze(self, owner, repo, branch, folder=""):
-        return (await self.analyze_intelligence(owner, repo, branch, folder)).to_legacy_analysis()
+    async def analyze(self, owner, repo, branch, folder="", *, force_refresh=False):
+        return (await self.analyze_intelligence(owner, repo, branch, folder, force_refresh=force_refresh)).to_legacy_analysis()
 
-    async def analyze_intelligence(self, owner, repo, branch, folder=""):
+    async def analyze_intelligence(self, owner, repo, branch, folder="", *, force_refresh=False):
         settings = get_settings()
         if not branch:
             repository = await self.github.repository(owner, repo)
@@ -39,7 +39,7 @@ class AnalysisService:
             raise BatonError('GitHub did not return an exact commit', 502)
         folder = folder.strip('/')
         cached = self.store.load(owner, repo, branch, commit, folder)
-        if cached is not None:
+        if cached is not None and not force_refresh:
             return sanitize_model(cached, secret_values(self.github.token))
         stale = any(x['owner'].lower() == owner.lower() and x['repo'].lower() == repo.lower() and x['branch'] == branch and x['folder'] == folder and x['commit'] != commit for x in self.store.metadata())
         tree = await self.github.tree_snapshot(owner, repo, commit)
@@ -90,4 +90,7 @@ class AnalysisService:
         intelligence = pipeline.run(items, contents, metadata, list(omissions))
         intelligence = sanitize_model(intelligence, secret_values(self.github.token))
         self.store.save(intelligence)
+        retained = self.store.load(owner, repo, branch, commit, folder)
+        if retained is None or retained.generated != intelligence.generated:
+            raise BatonError('Analysis could not be retained within the backend snapshot storage limits.', 503, 'snapshot_not_stored')
         return intelligence

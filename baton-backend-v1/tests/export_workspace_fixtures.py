@@ -41,7 +41,7 @@ async def main():
     unavailable = await workspace.inspect(WorkspaceRequest(**{**fields, 'branch': 'missing'}))
     output = Path(__file__).parents[2] / 'baton-frontend/.test-output'
     output.mkdir(exist_ok=True)
-    (output / 'workspace-fixtures.json').write_text(json.dumps({'project': project, 'role': role, 'feature': feature, 'chat': response, 'artifact': artifact, 'comparison': comparison,
+    (output / 'workspace-fixtures.json').write_text(json.dumps({'analysis': base.to_legacy_analysis(), 'project': project, 'role': role, 'feature': feature, 'chat': response, 'artifact': artifact, 'comparison': comparison,
                                                              'chat_artifact': chat_artifact, 'stale': stale, 'continued': continued,
                                                              'continued_chat': continued_chat, 'unavailable': unavailable}), encoding='utf-8')
     print('Exported canonical fixture responses for isolated browser tests.')

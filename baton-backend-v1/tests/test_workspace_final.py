@@ -118,8 +118,10 @@ async def test_stale_snapshot_never_silently_answers_and_can_be_explicitly_selec
 async def test_missing_branch_has_no_fallback_and_cross_branch_question_is_not_answered():
     workspace = service()
     state = await workspace.inspect(WorkspaceRequest(owner='example', repo='project', branch='other'))
-    assert not state['available'] and state['identity']['snapshot_status'] == 'UNAVAILABLE'
-    assert state['warnings'] == ['The selected branch does not currently have a valid repository intelligence snapshot.']
+    assert not state['available'] and state['identity']['snapshot_status'] == 'NOT_ANALYZED'
+    assert state['state'] == 'NOT_ANALYZED'
+    assert state['identity']['current_head'] == 'commit-1'
+    assert state['warnings'] == ['Analyze this branch to create its first repository context.']
     response = await workspace.chat(request(ChatRequest, message='What does feature/payment currently contain?'))
     assert 'Switch to the requested branch' in response['answer']
     workspace.provider.select.assert_not_called()

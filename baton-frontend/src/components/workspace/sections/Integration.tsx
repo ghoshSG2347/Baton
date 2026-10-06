@@ -1,3 +1,4 @@
+import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { Loader2, GitMerge, ArrowRight } from 'lucide-react';
@@ -13,7 +14,7 @@ type IntegrationState = 'idle' | 'loading' | 'success' | 'error';
 export function Integration({ state }: { state: WorkspaceStateHook }) {
   const [intState, setIntState] = useState<IntegrationState>('idle');
   const [result, setResult] = useState<IntegrationResult | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error | null>(null);
   const [frontendBranch, setFrontendBranch] = useState('');
   const [backendBranch, setBackendBranch] = useState('');
 
@@ -24,7 +25,7 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
     const bb = backendBranch.trim() || (state.isDemoMode ? 'member/arjun-api' : '');
     if (!fb || !bb) return;
     setIntState('loading');
-    setError('');
+    setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
@@ -48,7 +49,7 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
       setIntState('success');
     } catch (err) {
       setIntState('error');
-      setError(err instanceof Error ? err.message : 'Integration check failed');
+      setError(err instanceof Error ? err : new Error('Integration check failed'));
     }
   };
 
@@ -132,13 +133,7 @@ export function Integration({ state }: { state: WorkspaceStateHook }) {
 
       {/* Error */}
       {intState === 'error' && (
-        <Panel>
-          <div className="p-8 text-center">
-            <p className="text-sm text-baton-warning mb-2">INTEGRATION CHECK FAILED</p>
-            <p className="text-xs text-baton-text-tertiary mb-4">{error}</p>
-            <Button variant="secondary" onClick={handleCheck}>RETRY</Button>
-          </div>
-        </Panel>
+        <ErrorStatus error={error} operation="integration" primaryAction={<Button variant="secondary" onClick={handleCheck}>Retry request</Button>} />
       )}
 
       {/* Results */}

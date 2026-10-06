@@ -57,6 +57,8 @@ export function useWorkspaceState() {
   const [firstRun, setFirstRun] = useState(!initial?.repo);
   const [firstRunStep, setFirstRunStep] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
+  const [analysisRevision, setAnalysisRevision] = useState(0);
+  const markAnalysisComplete = useCallback(() => setAnalysisRevision((revision) => revision + 1), []);
   const [fileReference, setFileReference] = useState<{ request: WorkspaceRequest; path: string } | null>(null);
   const openRepositoryFile = useCallback((request: WorkspaceRequest, path: string) => {
     setFileReference({ request, path }); setActiveSection('repository');
@@ -143,6 +145,7 @@ export function useWorkspaceState() {
     changeRepository,
     resetVersion,
     fileReference, openRepositoryFile,
+    analysisRevision, markAnalysisComplete,
   };
 }
 

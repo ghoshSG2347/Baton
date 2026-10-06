@@ -1,6 +1,7 @@
+import { ErrorStatus, StatusPanel } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
-import { useState } from 'react';
-import { Loader2, AlertTriangle, FileWarning } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Loader2 } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { AnalysisResult } from '@/types';
 import { batonApi } from '@/lib/api/batonApi';
@@ -13,18 +14,28 @@ type AnalysisState = 'idle' | 'loading' | 'success' | 'partial' | 'error';
 export function Analysis({ state }: { state: WorkspaceStateHook }) {
   const [analysisState, setAnalysisState] = useState<AnalysisState>('idle');
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(state.isDemoMode ? DEMO_ANALYSIS : null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error | null>(null);
   const [folderInput, setFolderInput] = useState(state.selectedFolder || '');
 
+  const epoch = useRef(0);
+  const selectedIdentity = `${state.repo?.owner}/${state.repo?.repository}:${state.selectedBranch || state.repo?.default_branch || ''}:${state.selectedFolder}`;
+  useEffect(() => {
+    epoch.current++; setAnalysis(state.isDemoMode ? DEMO_ANALYSIS : null); setAnalysisState('idle'); setError(null); setFolderInput(state.selectedFolder);
+    // Cancel pending analysis responses when this view or identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { epoch.current++; };
+  }, [selectedIdentity, state.selectedFolder, state.isDemoMode]);
   const hasRepo = state.repo || state.isDemoMode;
 
   const handleAnalyze = async () => {
-    if (!hasRepo) return;
+    if (!hasRepo || analysisState === 'loading') return;
+    const current = ++epoch.current;
     setAnalysisState('loading');
-    setError('');
+    setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
+        if (current !== epoch.current) return;
         setAnalysis(DEMO_ANALYSIS);
         setAnalysisState(DEMO_ANALYSIS.analysis_warnings.length > 0 ? 'partial' : 'success');
       }, 1500);
@@ -35,13 +46,16 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
       if (!state.repo) return;
       const folder = folderInput || state.selectedFolder || '';
       const result = folder
-        ? await batonApi.analyzeFolder(state.repo.owner, state.repo.repository, state.selectedBranch || 'main', folder, state.githubToken || undefined)
-        : await batonApi.analyzeRepository(state.repo.owner, state.repo.repository, state.selectedBranch || 'main', state.githubToken || undefined);
+        ? await batonApi.analyzeFolder(state.repo.owner, state.repo.repository, state.selectedBranch || state.repo.default_branch || '', folder, state.githubToken || undefined)
+        : await batonApi.analyzeRepository(state.repo.owner, state.repo.repository, state.selectedBranch || state.repo.default_branch || '', state.githubToken || undefined);
+      if (current !== epoch.current) return;
       setAnalysis(result);
+      state.markAnalysisComplete();
       setAnalysisState(result.analysis_warnings.length > 0 || result.metadata.skipped_files.length > 0 ? 'partial' : 'success');
     } catch (err) {
+      if (current !== epoch.current) return;
       setAnalysisState('error');
-      setError(err instanceof Error ? err.message : 'Analysis failed');
+      setError(err instanceof Error ? err : new Error('Analysis failed'));
     }
   };
 
@@ -121,14 +135,7 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
 
       {/* Error state */}
       {analysisState === 'error' && (
-        <Panel>
-          <div className="p-8 text-center">
-            <AlertTriangle size={24} className="mx-auto text-baton-warning mb-3" />
-            <p className="text-sm text-baton-warning mb-2">ANALYSIS FAILED</p>
-            <p className="text-xs text-baton-text-tertiary mb-4">{error}</p>
-            <Button variant="secondary" onClick={handleAnalyze}>RETRY</Button>
-          </div>
-        </Panel>
+        <ErrorStatus error={error} operation="analysis" primaryAction={<Button variant="secondary" onClick={handleAnalyze}>Retry analysis</Button>} />
       )}
 
       {/* Results */}
@@ -138,11 +145,11 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-baton-border mb-6">
             <div className="bg-baton-near-black p-4">
               <MonoLabel>BRANCH</MonoLabel>
-              <div className="font-mono text-sm text-baton-text-highlight mt-1">{analysis.metadata.branch || 'main'}</div>
+              <div className="font-mono text-sm text-baton-text-highlight mt-1">{analysis.metadata.branch || 'Branch unavailable'}</div>
             </div>
             <div className="bg-baton-near-black p-4">
               <MonoLabel>COMMIT</MonoLabel>
-              <div className="font-mono text-sm text-baton-text-highlight mt-1">{shortSha(analysis.metadata.commit)}</div>
+              <div className="font-mono text-sm text-baton-text-highlight mt-1">{analysis.metadata.commit ? shortSha(analysis.metadata.commit) : 'Commit unavailable'}</div>
             </div>
             <div className="bg-baton-near-black p-4">
               <MonoLabel>GENERATED</MonoLabel>
@@ -155,24 +162,7 @@ export function Analysis({ state }: { state: WorkspaceStateHook }) {
           </div>
 
           {/* Partial warning */}
-          {analysisState === 'partial' && (
-            <div className="border border-baton-warning/30 bg-baton-near-black rounded-baton p-4 mb-6 flex items-start gap-3">
-              <FileWarning size={16} className="text-baton-warning flex-shrink-0 mt-0.5" />
-              <div>
-                <MonoLabel variant="warning">PARTIAL ANALYSIS</MonoLabel>
-                <div className="mt-1 space-y-1">
-                  {analysis.analysis_warnings.map((w, i) => (
-                    <p key={i} className="text-sm text-baton-text-tertiary">{w}</p>
-                  ))}
-                  {analysis.metadata.skipped_files.length > 0 && (
-                    <p className="text-xs text-baton-text-tertiary font-mono mt-2">
-                      Skipped: {analysis.metadata.skipped_files.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
+          {analysisState === 'partial' && <StatusPanel severity="warning" title="Analysis completed with limited coverage" explanation={`${analysis.metadata.skipped_files.length} source files were omitted. Review the recorded warnings and omitted paths before relying on an absent feature.`} technicalDetails={[...analysis.analysis_warnings, ...analysis.metadata.skipped_files].join('\n')} />}
 
           {/* Analysis sections */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

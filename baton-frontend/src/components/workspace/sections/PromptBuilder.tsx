@@ -1,3 +1,4 @@
+import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { useState } from 'react';
 import { Loader2, Download, RotateCcw } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
@@ -26,7 +27,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
   const [mode, setMode] = useState<PromptMode>('chat-first');
   const [promptState, setPromptState] = useState<PromptState>('idle');
   const [generatedPrompt, setGeneratedPrompt] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error | null>(null);
   const [form, setForm] = useState({
     task: '',
     context: '',
@@ -38,7 +39,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
   const handleGenerate = async () => {
     if (!form.task.trim()) return;
     setPromptState('loading');
-    setError('');
+    setError(null);
 
     const constraints = form.constraints
       .split('\n')
@@ -70,7 +71,7 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
       setPromptState('success');
     } catch (err) {
       setPromptState('error');
-      setError(err instanceof Error ? err.message : 'Prompt generation failed');
+      setError(err instanceof Error ? err : new Error('Prompt generation failed'));
     }
   };
 
@@ -230,14 +231,8 @@ export function PromptBuilder({ state }: { state: WorkspaceStateHook }) {
           )}
 
           {promptState === 'error' && (
-            <Panel label="ERROR">
-              <div className="p-8 text-center">
-                <p className="text-sm text-baton-warning mb-2">PROMPT GENERATION FAILED</p>
-                <p className="text-xs text-baton-text-tertiary mb-4">{error}</p>
-                <Button variant="secondary" onClick={handleGenerate}>RETRY</Button>
-              </div>
-            </Panel>
-          )}
+        <ErrorStatus error={error} operation="prompt" primaryAction={<Button variant="secondary" onClick={handleGenerate}>Retry request</Button>} />
+      )}
 
           {promptState === 'success' && (
             <Panel>

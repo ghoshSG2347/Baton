@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { ErrorStatus } from '@/components/ui/StatusPanel';
+import { useState, useEffect, useRef } from 'react';
 import { GitBranch, File, ChevronRight, Loader2, Github, LogOut } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { TreeItem, RepoValidation } from '@/types';
@@ -13,7 +14,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   const [urlInput, setUrlInput] = useState(state.repoUrl || '');
   const [tokenInput, setTokenInput] = useState('');
   const [validateState, setValidateState] = useState<ValidateState>('idle');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error | null>(null);
   const [branches, setBranches] = useState(state.isDemoMode ? DEMO_BRANCHES : [] as typeof DEMO_BRANCHES);
   const [tree, setTree] = useState<TreeItem[]>(state.isDemoMode ? DEMO_TREE : []);
   const [selectedFile, setSelectedFile] = useState<{ path: string; content: string } | null>(null);
@@ -21,25 +22,53 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [treeLoading, setTreeLoading] = useState(false);
   const [sourceLabel, setSourceLabel] = useState('');
+  const validationEpoch = useRef(0);
+  const fileEpoch = useRef(0);
+  const scopeRef = useRef('');
+  scopeRef.current = `${state.repo?.owner}/${state.repo?.repository}:${state.selectedBranch}`;
+  useEffect(() => () => { validationEpoch.current++; fileEpoch.current++; }, []);
+  useEffect(() => {
+    if (!state.repo || state.isDemoMode) return;
+    let active = true;
+    setBranches([]);
+    batonApi.getBranches(state.repo.owner, state.repo.repository, state.githubToken || undefined)
+      .then((items) => { if (active) setBranches(items); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err : new Error('Branches could not be loaded.')); });
+    return () => { active = false; };
+  }, [state.repo, state.githubToken, state.isDemoMode]);
+  useEffect(() => {
+    setSelectedFile(null); setExpandedDirs(new Set()); fileEpoch.current++;
+    if (!state.repo || !state.selectedBranch) { setTree([]); return; }
+    if (state.isDemoMode) { setTree(DEMO_TREE); return; }
+    let active = true; setTree([]); setTreeLoading(true); setError(null);
+    batonApi.getTree(state.repo.owner, state.repo.repository, state.selectedBranch, '', state.githubToken || undefined)
+      .then((items) => { if (active) setTree(items); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err : new Error('Branch files could not be loaded.')); })
+      .finally(() => { if (active) setTreeLoading(false); });
+    return () => { active = false; };
+  }, [state.repo, state.selectedBranch, state.githubToken, state.isDemoMode]);
   useEffect(() => {
     const reference = state.fileReference;
     if (!reference) return;
     let active = true;
-    setSelectedFile(null); setFileLoading(true); setError('');
+    setSelectedFile(null); setFileLoading(true); setError(null);
     batonApi.source({ ...reference.request, path: reference.path }, state.githubToken || undefined)
       .then((result) => { if (active) { setSelectedFile(result); setSourceLabel(`Commit ${shortSha(result.identity.commit)} · lines ${result.start_line}–${result.end_line}${result.partial ? ' · partial source region' : ''}`); } })
-      .catch((err) => { if (active) setError(err instanceof Error ? err.message : 'Source could not be loaded.'); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err : new Error('Source could not be loaded.')); })
       .finally(() => { if (active) setFileLoading(false); });
     return () => { active = false; };
   }, [state.fileReference, state.githubToken]);
 
   const handleValidate = async () => {
-    if (!urlInput.trim()) return;
+    if (!urlInput.trim() || validateState === 'loading') return;
+    const current = ++validationEpoch.current;
+    const effectiveToken = tokenInput.trim() || state.githubToken;
     setValidateState('loading');
-    setError('');
+    setError(null);
 
     if (state.isDemoMode || urlInput.includes('baton/demo-project')) {
       setTimeout(() => {
+        if (current !== validationEpoch.current) return;
         const demoRepo: RepoValidation = {
           owner: 'baton',
           repository: 'demo-project',
@@ -56,41 +85,23 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
     }
 
     try {
-      const result = await batonApi.validateRepository(urlInput, tokenInput || undefined);
+      const result = await batonApi.validateRepository(urlInput, effectiveToken || undefined);
+      if (current !== validationEpoch.current) return;
       state.setRepoUrl(urlInput);
       state.setRepo(result);
-      state.setGithubToken(tokenInput);
+      state.setGithubToken(effectiveToken);
+      state.setSelectedBranch(result.default_branch || '');
+      state.setSelectedFolder('');
       setValidateState('success');
-      const fetchedBranches = await batonApi.getBranches(result.owner, result.repository, tokenInput || undefined);
-      setBranches(fetchedBranches);
+
     } catch (err) {
+      if (current !== validationEpoch.current) return;
       setValidateState('error');
-      setError(err instanceof Error ? err.message : 'Failed to validate repository');
+      setError(err instanceof Error ? err : new Error('Failed to validate repository'));
     }
   };
 
-  const handleBranchSelect = async (branchName: string) => {
-    state.setSelectedBranch(branchName);
-    setSelectedFile(null);
-    setTreeLoading(true);
-    if (state.isDemoMode) {
-      setTimeout(() => {
-        setTree(DEMO_TREE);
-        setTreeLoading(false);
-      }, 600);
-      return;
-    }
-    try {
-      if (state.repo) {
-        const items = await batonApi.getTree(state.repo.owner, state.repo.repository, branchName, '', tokenInput || state.githubToken || undefined);
-        setTree(items);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch tree');
-    } finally {
-      setTreeLoading(false);
-    }
-  };
+  const handleBranchSelect = (branchName: string) => state.setSelectedBranch(branchName);
 
   const handleFileClick = async (path: string) => {
     setSourceLabel('Current branch source');
@@ -99,7 +110,9 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       return;
     }
     if (!state.repo || !state.selectedBranch) return;
-    setFileLoading(true);
+    const current = ++fileEpoch.current;
+    const selectedScope = scopeRef.current;
+    setFileLoading(true); setSelectedFile(null); setError(null);
     try {
       const fileData = await batonApi.getFile(
         state.repo.owner,
@@ -108,14 +121,11 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
         path,
         tokenInput || state.githubToken || undefined
       );
-      setSelectedFile({ path: fileData.path, content: fileData.content });
+      if (current === fileEpoch.current && selectedScope === scopeRef.current) setSelectedFile({ path: fileData.path, content: fileData.content });
     } catch (err) {
-      setSelectedFile({
-        path,
-        content: `// Error loading file: ${err instanceof Error ? err.message : 'Failed to fetch file content'}`,
-      });
+      if (current === fileEpoch.current && selectedScope === scopeRef.current) setError(err instanceof Error ? err : new Error('File could not be loaded.'));
     } finally {
-      setFileLoading(false);
+      if (current === fileEpoch.current && selectedScope === scopeRef.current) setFileLoading(false);
     }
   };
 
@@ -150,7 +160,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       <SectionLabel className="mb-6">REPOSITORY</SectionLabel>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Repository</h1>
       <p className="text-sm text-baton-text-tertiary mb-8">Connect and inspect the GitHub repository.</p>
-      {error && <p role="alert" className="text-sm text-baton-warning mb-4">{error}</p>}
+      {error && <div className="mb-4"><ErrorStatus error={error} operation="connection" primaryAction={!state.repo && <Button onClick={handleValidate} disabled={validateState === 'loading'}>Retry connection</Button>} /></div>}
 
       {/* Connect form */}
       {!state.repo && validateState !== 'success' && (
@@ -194,9 +204,6 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
                   'VALIDATE REPOSITORY'
                 )}
               </Button>
-              {validateState === 'error' && (
-                <span className="text-sm text-baton-warning">{error}</span>
-              )}
             </div>
             {validateState === 'loading' && (
               <div className="pt-2">

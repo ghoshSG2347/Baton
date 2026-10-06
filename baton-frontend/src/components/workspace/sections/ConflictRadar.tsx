@@ -1,6 +1,7 @@
+import { ErrorStatus } from '@/components/ui/StatusPanel';
 import { motion } from 'framer-motion';
 import { useState } from 'react';
-import { Loader2, Radar, AlertTriangle, GitBranch } from 'lucide-react';
+import { Loader2, Radar, GitBranch } from 'lucide-react';
 import type { WorkspaceStateHook } from '@/hooks/useWorkspaceState';
 import type { ConflictResult } from '@/types';
 import { batonApi } from '@/lib/api/batonApi';
@@ -18,7 +19,7 @@ const DEMO_LANE_FILES: Record<string, string[]> = {
 export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
   const [conflictState, setConflictState] = useState<ConflictState>('idle');
   const [result, setResult] = useState<ConflictResult | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error | null>(null);
   const [branchesInput, setBranchesInput] = useState(
     state.isDemoMode
       ? 'member/alex-ui\nmember/sam-api'
@@ -33,7 +34,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
     const branchNames = branchesInput.split('\n').map((b) => b.trim()).filter(Boolean);
     if (branchNames.length < 2) return;
     setConflictState('loading');
-    setError('');
+    setError(null);
 
     if (state.isDemoMode) {
       setTimeout(() => {
@@ -61,7 +62,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
       setConflictState('success');
     } catch (err) {
       setConflictState('error');
-      setError(err instanceof Error ? err.message : 'Conflict detection failed');
+      setError(err instanceof Error ? err : new Error('Conflict detection failed'));
     }
   };
 
@@ -129,14 +130,7 @@ export function ConflictRadar({ state }: { state: WorkspaceStateHook }) {
 
       {/* Error */}
       {conflictState === 'error' && (
-        <Panel>
-          <div className="p-8 text-center">
-            <AlertTriangle size={24} className="mx-auto text-baton-warning mb-3" />
-            <p className="text-sm text-baton-warning mb-2">SCAN FAILED</p>
-            <p className="text-xs text-baton-text-tertiary mb-4">{error}</p>
-            <Button variant="secondary" onClick={handleDetect}>RETRY</Button>
-          </div>
-        </Panel>
+        <ErrorStatus error={error} operation="conflicts" primaryAction={<Button variant="secondary" onClick={handleDetect}>Retry request</Button>} />
       )}
 
       {/* Results — branch lanes visualization */}

@@ -1,0 +1,20 @@
+.baton-status { --status-tone:#94979e; display:flex; align-items:flex-start; gap:12px; padding:16px; border:1px solid #303236; border-left:2px solid var(--status-tone); border-radius:4px; background:#101112; color:#c9cbcf; text-align:left; }
+
+.baton-status-warning { --status-tone:#d6ad65; }.baton-status-error { --status-tone:#ee796d; }.baton-status-success { --status-tone:#34d59a; }
+
+.baton-status>svg { color:var(--status-tone); flex-shrink:0; margin-top:2px; }.baton-status-content { min-width:0; flex:1; }
+
+.baton-status h3 { margin:0 0 5px; font-size:13px; font-weight:500; color:#f0f1f2; text-transform:none; letter-spacing:0; }
+
+.baton-status p { margin:0; font-size:12px; line-height:1.65; max-width:64ch; color:#a8abb1; overflow-wrap:anywhere; }
+
+.baton-status-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; }
+
+.baton-status details { margin-top:12px; }.baton-status summary { color:#94979e; font-size:11px; cursor:pointer; }
+
+.baton-status pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; line-height:1.6; margin-top:8px; color:#94979e; }
+
+.baton-status code { font-size:11px; overflow-wrap:anywhere; }.baton-status .baton-status-commit { margin-top:10px; font-size:11px; }
+
+
+.baton-status-actions button { text-transform:none; letter-spacing:0; }
