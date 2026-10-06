@@ -17,16 +17,39 @@ class GitHubService:
         if self.token: headers["Authorization"]=f"Bearer {self.token}"
         try:
             async with httpx.AsyncClient(base_url="https://api.github.com", timeout=20) as c: r=await c.request(method,path,headers=headers,**kwargs)
-        except httpx.HTTPError: raise BatonError("GitHub request failed",502)
-        if r.status_code>=400: raise BatonError("GitHub request failed", r.status_code)
-        return r.json()
+        except httpx.HTTPError:
+            raise BatonError("Baton could not reach GitHub. Please retry.", 502, "github_network_failure") from None
+        if r.status_code >= 400:
+            # Inspect only for classification; never return or log upstream bodies/credentials.
+            try:
+                body = r.json()
+                message = str(body.get("message", "")).lower() if isinstance(body, dict) else ""
+            except ValueError:
+                message = ""
+            if r.status_code == 429 or (r.status_code == 403 and (
+                r.headers.get("x-ratelimit-remaining") == "0" or r.headers.get("retry-after")
+                or "rate limit" in message)):
+                raise BatonError("GitHub rate limit reached. Wait before retrying; a valid GitHub token can increase the limit.", 429, "github_rate_limit")
+            if r.status_code == 401:
+                raise BatonError("GitHub authentication failed. Replace the supplied GitHub token or the backend GITHUB_TOKEN.", 401, "github_authentication_failure")
+            if r.status_code == 403:
+                raise BatonError("GitHub denied access. Check token permissions and organization authorization.", 403, "github_permission_failure")
+            if r.status_code == 404:
+                raise BatonError("GitHub repository or resource not found, or inaccessible. Check the repository URL; for a private repository, supply a GitHub token with access.", 404, "github_not_found")
+            raise BatonError(f"GitHub API returned HTTP {r.status_code}. Please retry or check GitHub availability.", 502, "github_api_failure")
+        try:
+            return r.json()
+        except ValueError:
+            raise BatonError("GitHub returned an invalid API response. Please retry.", 502, "github_api_failure") from None
     @staticmethod
     def validate_repo_url(url:str)->tuple[str,str]:
         m=re.fullmatch(r"https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)/?",url.strip())
-        if not m: raise BatonError("repo_url must be a public github.com owner/repository URL")
+        if not m: raise BatonError("Invalid repository URL. Use https://github.com/owner/repository.", 400, "invalid_repository_url")
         owner, repo = m.group(1), m.group(2)
         if repo.endswith(".git"):
             repo = repo[:-4]
+        if not repo or repo in (".", "..") or owner in (".", ".."):
+            raise BatonError("Invalid repository URL. Use https://github.com/owner/repository.", 400, "invalid_repository_url")
         return owner, repo
     async def repository(self,owner,repo): return await self.request("GET",f"/repos/{owner}/{repo}")
     async def branches(self,owner,repo): return await self.request("GET",f"/repos/{owner}/{repo}/branches",params={"per_page":100})

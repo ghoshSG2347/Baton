@@ -10,6 +10,7 @@ import type {
   IntegrationResult,
 } from '@/types';
 import type { WorkspaceRequest, WorkspaceInspection, ChatAnswer, WorkspaceArtifact, ArtifactType, BranchComparison } from '@/types';
+import { redactUserText } from '@/lib/utils/redaction';
 
 const RAW_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
 const BASE_URL = RAW_URL.replace(/\/+$/, '');
@@ -19,12 +20,14 @@ export function setBatonAccessKey(value: string) { batonAccessKey = value; }
 export class BatonApiError extends Error {
   status: number;
   detail: string;
+  code: string;
 
-  constructor(message: string, status: number = 0, detail?: string) {
+  constructor(message: string, status: number = 0, detail?: string, code: string = 'baton_backend_failure') {
     super(message);
     this.name = 'BatonApiError';
     this.status = status;
     this.detail = detail || message;
+    this.code = code;
   }
 }
 
@@ -44,7 +47,7 @@ async function apiRequest<T>(
   };
 
   if (batonAccessKey) headers['X-Baton-Key'] = batonAccessKey;
-  if (githubToken) headers['X-GitHub-Token'] = githubToken;
+  if (githubToken?.trim()) headers['X-GitHub-Token'] = githubToken.trim();
 
   let res: Response;
   try {
@@ -52,14 +55,16 @@ async function apiRequest<T>(
   } catch {
     throw new BatonApiError(
       'Unable to reach Baton backend. Check the backend URL or network connection.',
-      0
+      0, undefined, 'network_failure'
     );
   }
 
   if (!res.ok) {
     let bodyDetail = '';
+    let errorCode = 'baton_backend_failure';
     try {
       const body = await res.json();
+      if (typeof body.code === 'string') errorCode = body.code;
       if (typeof body.detail === 'string') {
         bodyDetail = body.detail;
       } else if (Array.isArray(body.detail)) {
@@ -84,11 +89,15 @@ async function apiRequest<T>(
       defaultMsg = 'Baton backend encountered an internal error.';
     }
 
-    const message = bodyDetail || defaultMsg;
-    throw new BatonApiError(message, res.status, bodyDetail || defaultMsg);
+    const message = redactUserText(bodyDetail || defaultMsg, [githubToken || '', batonAccessKey]);
+    throw new BatonApiError(message, res.status, message, errorCode);
   }
 
-  return res.json() as Promise<T>;
+  try {
+    return await res.json() as T;
+  } catch {
+    throw new BatonApiError('Baton backend returned an invalid response.', res.status);
+  }
 }
 
 export const batonApi = {

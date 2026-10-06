@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
@@ -125,3 +126,48 @@ def test_validate_repository_url_normalization():
     assert GitHubService.validate_repo_url("https://github.com/owner/repo/") == ("owner", "repo")
     assert GitHubService.validate_repo_url("https://github.com/owner/repo.git") == ("owner", "repo")
     assert GitHubService.validate_repo_url("https://github.com/owner/repo.git/") == ("owner", "repo")
+
+
+@pytest.mark.parametrize("status,headers,message,expected_status,code", [
+    (401, {}, "Bad credentials", 401, "github_authentication_failure"),
+    (403, {}, "Resource not accessible", 403, "github_permission_failure"),
+    (403, {"x-ratelimit-remaining": "0"}, "API rate limit exceeded", 429, "github_rate_limit"),
+    (403, {"retry-after": "60"}, "secondary rate limit", 429, "github_rate_limit"),
+    (429, {}, "Too many requests", 429, "github_rate_limit"),
+    (404, {}, "Not Found", 404, "github_not_found"),
+    (503, {}, "Unavailable", 502, "github_api_failure"),
+])
+def test_github_failure_propagation(monkeypatch, status, headers, message, expected_status, code):
+    monkeypatch.setattr(get_settings(), "baton_access_key", "")
+    async def response(self, method, path, **kwargs):
+        assert path == "/repos/ghoshSG2347/No-Way-Home3"
+        return httpx.Response(status, headers=headers, json={"message": message + " ghp_upstream_secret"})
+    with patch("httpx.AsyncClient.request", new=response):
+        result = client.post("/api/v1/github/validate-repository",
+                             json={"repo_url": "https://github.com/ghoshSG2347/No-Way-Home3"},
+                             headers={"X-GitHub-Token": "ghp_request_secret"})
+    assert result.status_code == expected_status
+    assert result.json()["code"] == code
+    assert "ghp_" not in result.text
+    assert "GitHub request failed" not in result.text
+
+
+@pytest.mark.parametrize("url", ["https://example.com/owner/repo", "https://github.com/owner/.git", "https://github.com/owner/../"])
+def test_invalid_repository_error(url):
+    result = client.post("/api/v1/github/validate-repository", json={"repo_url": url})
+    assert result.status_code == 400
+    assert result.json()["code"] == "invalid_repository_url"
+
+
+@pytest.mark.parametrize("invalid_json", [False, True])
+def test_github_network_and_invalid_response(monkeypatch, invalid_json):
+    monkeypatch.setattr(get_settings(), "baton_access_key", "")
+    async def response(self, method, path, **kwargs):
+        if invalid_json:
+            return httpx.Response(200, text="not json ghp_upstream_secret")
+        raise httpx.ConnectError("connection error ghp_request_secret")
+    with patch("httpx.AsyncClient.request", new=response):
+        result = client.post("/api/v1/github/validate-repository", json={"repo_url": "https://github.com/owner/repo"})
+    assert result.status_code == 502
+    assert result.json()["code"] == ("github_api_failure" if invalid_json else "github_network_failure")
+    assert "ghp_" not in result.text
