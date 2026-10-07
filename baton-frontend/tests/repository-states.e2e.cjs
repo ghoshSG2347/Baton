@@ -18,6 +18,8 @@ async function start(nextMode, branch = 'main') {
  await page.evaluate(state => localStorage.setItem('baton-workspace-state', JSON.stringify(state)), { ...baseState, selectedBranch: branch });
  await page.reload();
  await page.getByRole('button', { name: /Enter Mission Control/i }).first().click();
+ await page.getByLabel('GitHub token for connected repository').fill('fixture-browser-credential');
+ await page.getByRole('button', { name: 'Validate repository access', exact: true }).click();
  await page.getByRole('heading', { name: /Ask Baton/ }).waitFor(); await loaded();
 }
 async function check(name, callback) { await callback(); checks.push(name); console.log('Passed: ' + name); }
@@ -60,7 +62,7 @@ function inspection(body) {
    analysisCount++; mode = 'ready';
    return send(clone(fixture.analysis));
   }
-  if (url.pathname.endsWith('/validate-repository')) return send(baseState.repo);
+  if (url.pathname.endsWith('/validate-repository')) return send({ ...baseState.repo, authenticated: true, token_source: 'request', rate_limit: {} });
   if (url.pathname.endsWith('/chat')) return send(fixture.chat);
   if (url.pathname.endsWith('/artifacts')) return send(fixture.artifact);
   if (url.pathname.endsWith('/tree')) return send({ items: [] });
@@ -144,7 +146,7 @@ function inspection(body) {
   await page.getByRole('button', {name:'New chat',exact:true}).click();
   assert.equal(await page.locator('.ai-grounding').innerText(), 'Analysis failed', 'New chat must not erase a repository failure');
  });
- for (const [status, code, title] of [[401,'github_authentication_failure','GitHub authentication failed'],[403,'github_permission_failure','GitHub denied the request'],[404,'github_not_found','Repository or branch not found'],[429,'github_rate_limit','GitHub API limit reached'],[502,'github_network_failure','Could not reach the repository service']]) {
+ for (const [status, code, title] of [[401,'github_authentication_failure','GitHub token is invalid or expired'],[403,'github_permission_failure','GitHub denied the request'],[404,'github_not_found','Repository or branch not found'],[429,'github_rate_limit','GitHub API limit reached'],[502,'github_network_failure','Could not reach the repository service']]) {
   await start({status,code});
   await check('HTTP ' + status + ' category is safe and chat remains disabled', async () => {
    assert((await page.locator('.ai-analysis-status').innerText()).includes(title));
@@ -179,7 +181,7 @@ function inspection(body) {
  await check('connected repository accepts a token again and keeps it out of storage', async () => {
   await page.getByRole('button',{name:'Repository',exact:true}).click();
   await page.getByLabel('GitHub token for connected repository').fill('audit-token-canary');
-  await page.getByRole('button',{name:'Check GitHub access',exact:true}).click();
+  await page.getByRole('button',{name:'Validate repository access',exact:true}).click();
   await page.getByText(/GitHub accepted the token/).waitFor();
   assert(!(await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage))).includes('audit-token-canary'));
  });

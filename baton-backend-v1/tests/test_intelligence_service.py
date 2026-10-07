@@ -175,7 +175,7 @@ def test_existing_routes_consume_canonical_projection(monkeypatch):
     monkeypatch.setattr(AnalysisService, 'analyze_intelligence', AsyncMock(return_value=intel))
     from app.services.context_snapshot import ContextSnapshotService
     monkeypatch.setattr(ContextSnapshotService, 'load', AsyncMock(return_value=intel))
-    client = TestClient(app)
+    client = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'})
     request = {'owner': 'o', 'repo': 'r', 'branch': 'main'}
     for route in ('/api/v1/analysis/repository', '/api/v1/analysis/folder'):
         response = client.post(route, json=request)

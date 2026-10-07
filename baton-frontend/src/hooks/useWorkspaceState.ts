@@ -35,7 +35,12 @@ function saveState(state: WorkspaceState) {
     const { githubToken, batonAccessKey, ...persistable } = state;
     void githubToken;
     void batonAccessKey;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(redactUserData(persistable, [githubToken, batonAccessKey])));
+    const remembered = { ...persistable, repo: persistable.repo ? {
+      owner: persistable.repo.owner, repository: persistable.repo.repository,
+      default_branch: persistable.repo.default_branch, visibility: persistable.repo.visibility,
+      accessible: false, current_head: persistable.repo.current_head,
+    } : null };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(redactUserData(remembered, [githubToken, batonAccessKey])));
   } catch {
     // ignore
   }
@@ -50,13 +55,17 @@ export function useWorkspaceState() {
   const [selectedFolder, setSelectedFolder] = useState(initial?.selectedFolder || '');
   const [members, setMembers] = useState<TeamMember[]>(initial?.members || []);
   const [isDemoMode, setIsDemoMode] = useState(initial?.isDemoMode || false);
-  const [githubToken, setGithubToken] = useState('');
+  const [githubToken, setGithubTokenState] = useState('');
   const [batonAccessKey, setAccessKeyState] = useState('');
   const setBatonAccessKey = useCallback((value: string) => { configureAccess(value); setAccessKeyState(value); }, []);
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('ai');
   const [firstRun, setFirstRun] = useState(!initial?.repo);
   const [firstRunStep, setFirstRunStep] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
+  const setGithubToken = useCallback((value: string) => {
+    setGithubTokenState(value.trim());
+    setFileReference(null);
+  }, []);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const markAnalysisComplete = useCallback(() => setAnalysisRevision((revision) => revision + 1), []);
   const [fileReference, setFileReference] = useState<{ request: WorkspaceRequest; path: string } | null>(null);
@@ -106,7 +115,7 @@ export function useWorkspaceState() {
     setFirstRunStep(0);
     setResetVersion((version) => version + 1);
     localStorage.removeItem(STORAGE_KEY);
-  }, [setBatonAccessKey]);
+  }, [setBatonAccessKey, setGithubToken]);
 
   // Clears all repository-specific state and persisted localStorage while
   // preserving the in-memory GitHub token so the user can immediately

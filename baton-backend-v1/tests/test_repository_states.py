@@ -102,7 +102,7 @@ async def test_real_github_empty_status_reaches_existing_analysis_handling(monke
         return httpx.Response(409, json={'message': 'Git Repository is empty.'})
     with patch('httpx.AsyncClient.request', new=response):
         with pytest.raises(BatonError) as error:
-            await GitHubService().commit('o', 'empty', 'main')
+            await GitHubService('fixture-credential').commit('o', 'empty', 'main')
     assert error.value.status_code == 409 and error.value.code == 'empty_repository'
 
 @pytest.mark.parametrize('endpoint,folder', [('repository', ''), ('folder', 'client')])
@@ -113,6 +113,6 @@ def test_force_refresh_contract_reaches_existing_analyzer(monkeypatch, endpoint,
     monkeypatch.setattr(AnalysisService, 'analyze', mock)
     payload = {'owner': 'o', 'repo': 'r', 'branch': 'main', 'force_refresh': True}
     if folder: payload['folder'] = folder
-    result = TestClient(app).post('/api/v1/analysis/' + endpoint, json=payload)
+    result = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'}).post('/api/v1/analysis/' + endpoint, json=payload)
     assert result.status_code == 200
     mock.assert_awaited_once_with('o', 'r', 'main', folder, force_refresh=True)

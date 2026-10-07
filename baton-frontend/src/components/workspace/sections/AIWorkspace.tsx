@@ -105,12 +105,12 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, canOperate, state.githubToken, state.batonAccessKey, state.analysisRevision]);
   useEffect(() => {
-    if (!canOperate || !state.repo) return;
+    if (!canOperate || !state.repo || knownHead.key !== identityKey || !knownHead.sha) return;
     let active = true; setBranches([]); setBranchError(null);
     batonApi.getBranches(state.repo.owner, state.repo.repository, state.githubToken || undefined)
       .then((items) => { if (active) setBranches(items); }).catch((err) => { if (active) { setBranches([]); setBranchError(err); } });
     return () => { active = false; };
-  }, [canOperate, state.repo, state.githubToken]);
+  }, [canOperate, state.repo, state.githubToken, knownHead.key, knownHead.sha, identityKey]);
   useEffect(() => {
     if (state.activeSection !== 'ai' || !canOperate || busy || !inspectionMatches || !inspection) return;
     const current = epoch.current;

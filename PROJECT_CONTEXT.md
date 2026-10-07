@@ -2,9 +2,9 @@
 
 ## 1. Document Status
 
-**OBSERVED:** Updated on 2026-10-07 for `https://github.com/ghoshSG2347/Baton`, branch `main`. The current application baseline is `ed870ea8a5b294f332cfb20b476a7bb46a2b1198` (`fix: connect Baton product workflows to canonical snapshots`), delivered to `origin/main`. The implementation pass started at `96f1e37a3ca252b1b9684c3d4a57ac7eaf27ac65`. This documentation refresh cross-checks that delivered code; earlier test, environment and live observations retain their recorded verification scope. Find the documentation commit through `git log -- PROJECT_CONTEXT.md`; a document cannot embed its own final Git hash without changing that hash.
+**OBSERVED:** Updated on 2026-10-07 for `https://github.com/ghoshSG2347/Baton`. This task opened at `135e3c3` on `baton-current`, then fast-forwarded the clean checkout to current `origin/main`, `fe4059a`, before implementation. Delivery targets remote `main`. The final implementation commit contains this context and PROJECT_AUDIT.md; resolve its full identity through Git history because a file cannot embed its own commit hash without changing it.
 
-**VERIFIED:** Backend tests, frontend checks, service fixtures, browser transitions and live GitHub checks were executed during the completed implementation pass. This documentation-only refresh checks source, documentation and Git state; it does not claim a new test run or deployment verification. Detailed results and verification boundaries are in [PROJECT_AUDIT.md](PROJECT_AUDIT.md). Production health and GitHub authentication were checked separately from local tests. Live Gemini answer quality was not verified.
+**VERIFIED:** This pass executes backend, frontend, fixture-browser and actual GitHub checks for required request credentials and bounded archive collection. Public/private real checks used an accepted existing Git credential held only in memory. It is not a Fine-grained PAT: exact Fine-grained selection/permission/expiration/revocation combinations remain fixture-tested, not certified live. No live Gemini question was sent; provider inspection returned configured=false. Deployment identity is checked independently from a push using the new safe revision markers. See PROJECT_AUDIT.md for exact scope and measured costs.
 
 **OBSERVED:** The inventory covers the entire tracked repository, application source, test harnesses, deployment/build settings and existing documentation. Dependency installations, build output, bytecode and browser screenshots are generated material, not architecture. Ignored environment files were inspected only through names, safe configuration values and presence/acceptance checks. Credentials are intentionally absent here.
 
@@ -28,7 +28,7 @@ Evidence vocabulary: **OBSERVED** = inspected source/configuration; **DOCUMENTED
 
 ## 5. Current Product Capabilities
 
-**OBSERVED:** Repository URL validation; optional GitHub access check; branch and recursive tree browsing; bounded text file viewing; explicit repository/folder analysis; evidence-aware project classification; process-local snapshots; project/role/task/AI handoff context views; manual team configuration; Markdown downloads/copy; grounded workspace artifacts; Gemini evidence selection and labeled reasoning; snapshot comparison and pinned source regions.
+**OBSERVED:** Repository URL validation; required user GitHub token/repository preflight; branch and recursive tree browsing; bounded text file viewing; explicit repository/folder analysis; evidence-aware project classification; process-local snapshots; project/role/task/AI handoff context views; manual team configuration; Markdown downloads/copy; grounded workspace artifacts; Gemini evidence selection and labeled reasoning; snapshot comparison and pinned source regions.
 
 The standalone surfaces include canonical/manual prompt exports, editable local team ownership, measured Overview data, branch inventory overlap signals and two-branch route-level integration comparison. Demo fixtures support older screens; they are not live AI evidence. See sections 16–20 for their exact boundaries.
 
@@ -40,7 +40,7 @@ The standalone surfaces include canonical/manual prompt exports, editable local 
 
 ## 7. User Workflow
 
-**OBSERVED:** `main.tsx → App.tsx → LandingPage → WorkspaceShell`. The user enters Mission Control, connects an HTTPS/HTTP GitHub owner/repository URL, optionally supplies a token, chooses a branch/folder and explicitly analyzes it through Analysis or Ask Baton. This resolves a commit, fetches eligible content, builds one intelligence model and retains a snapshot.
+**OBSERVED:** `main.tsx → App.tsx → LandingPage → WorkspaceShell`. The user enters Mission Control, connects an HTTPS/HTTP GitHub owner/repository URL, supplies their own GitHub token (the UI requires a Fine-grained Personal Access Token with Metadata: Read and Contents: Read), chooses a branch/folder and explicitly analyzes it through Analysis or Ask Baton. This resolves a commit, fetches eligible content, builds one intelligence model and retains a snapshot.
 
 The user can configure Team & Ownership, choose a member/task/protected scopes in Ask Baton, inspect evidence, create artifacts and ask repository questions. Context Builder reads an existing exact-folder snapshot; it never creates one. Prompt Builder defaults to canonical snapshot artifacts; explicit Manual input formats unverified operator text. Conflict Radar reads branch trees after a scan click. Integration may analyze two branches after a check click. Ask Baton's branch review requires both existing snapshots.
 
@@ -57,7 +57,7 @@ Browser: React/Vite/Tailwind workspace
        ↓
 FastAPI app.main: CORS, request validation, safe JSON response boundary
   ├─ GitHub routes → token dependency → GitHubService → api.github.com
-  ├─ AnalysisService → commit/tree/files → intelligence.pipeline
+  ├─ AnalysisService → commit + bounded archive (tree/files fallback) → intelligence.pipeline
   │                                      ↓
   │                            RepositoryIntelligence 1.1
   │                                      ↓
@@ -101,9 +101,9 @@ There is no shared runtime code package between Python and TypeScript. Frontend 
 
 **OBSERVED:** `app/main.py` builds FastAPI, registers health/github/analysis/context/prompt/conflicts/integration/workspace routers, installs CORS and `SafeJSONResponses`, and handles `BatonError` plus request-validation failures. Invalid requests return a safe generic 422 message; custom errors return safe detail/code and allowlisted quota metadata. Unexpected failures have no application-wide custom classification; they remain framework/backend failures.
 
-`api/deps.py` resolves GitHub headers/fallback. `core/security.py` provides optional shared operator-key protection for ordinary routes and mandatory configured operator-key protection for chat. This is not a user identity/RBAC system. `core/config.py` owns cached settings. Schemas validate inputs; services perform collection or projections; analyzers extract static facts; generators render outputs. `intelligence/models.py` is the typed canonical repository model.
+`api/deps.py` requires a nonblank request GitHub header and never reads the server fallback. `core/security.py` provides optional shared operator-key protection for ordinary routes and mandatory configured operator-key protection for chat. This is not a user identity/RBAC system. `core/config.py` owns cached settings. Schemas validate inputs; services perform collection or projections; analyzers extract static facts; generators render outputs. `intelligence/models.py` is the typed canonical repository model.
 
-**OBSERVED:** Purpose/inputs/outputs/dependencies/source-of-truth of major services are specified in sections 11–20 and the responsibility map. There is no background task queue; collection uses asyncio tasks and sequential file requests; static analysis executes in the request's process.
+**OBSERVED:** Purpose/inputs/outputs/dependencies/source-of-truth of major services are specified in sections 11–20 and the responsibility map. There is no background task queue; collection uses asyncio tasks and bounded archive streams or sequential fallback file requests; static analysis executes in the request's process.
 
 ## 11. GitHub Integration
 
@@ -111,24 +111,26 @@ There is no shared runtime code package between Python and TypeScript. Frontend 
 
 URL parsing uses a full match for `http(s)://github.com/owner/repository[/]`, ASCII owner/name characters, optional `.git` removal and rejection of empty/dot names. It rejects arbitrary hosts, embedded credentials and extra URL segments/query/fragment. Repository metadata, branches, tree, HEAD and file service entry points also validate direct owner/repo fields through the existing URL grammar before constructing fixed GitHub API paths. Ref/path quoting remains separate from repository-name validation.
 
-Token precedence: nonblank `X-GitHub-Token` → nonblank `GITHUB_TOKEN` → no token. GitHubService defensively repeats fallback. Each actual request uses `Accept: application/vnd.github+json`, API version `2022-11-28`, and `Authorization: Bearer …` when resolved token exists. Token source is reported as `request`, `server` or `none`; no token text is logged. No frontend Gemini call exists.
+**VERIFIED:** Canonical user credential path: memory `useWorkspaceState.githubToken` → `batonApi` sends `X-GitHub-Token` → FastAPI `github_token` requires that request credential → existing GitHubService → GitHub REST Bearer header. Neither dependency nor service constructor falls back to GITHUB_TOKEN. A missing token raises `github_token_required` before network; this includes public repositories, source, context/snapshot authorization, analysis, integration and workspace operations. Conflict Radar uses this same client for tree reads; its final overlap computation makes no GitHub request. Manual prompt formatting likewise has no GitHub dependency.
 
-GitHub paths: `/repos/{owner}/{repo}`, `/branches?per_page=100`, `/commits/{quoted_ref}`, `/git/trees/{quoted_ref}?recursive=1`, `/contents/{quoted_path}?ref={ref}`. Branches are not paginated beyond the first page. Analysis resolves commit before using it for both tree and content; ordinary repository browsing may use a branch ref. Files are base64-decoded UTF-8 with a configured size limit.
+**OBSERVED:** UI guidance requires a Fine-grained PAT and selected repository with Metadata: Read and Contents: Read; no write/admin permissions are requested. Acceptance is proven by `/user`, not token presence. Fresh repository metadata and fresh branches prove actual repository/Contents read access; fresh commit resolves default-branch HEAD independently of snapshots. Preflight returns authenticated/request, repository_accessible/accessibility, owner/repository/visibility/default branch/current_head and safe quota metadata, never account profile. Baton checks endpoint behavior and does not claim to infer the token subtype or granted permission list from its prefix. GitHub's X-Accepted-GitHub-Permissions describes an endpoint requirement, not the token's grants. See [GitHub permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens) and [token guide](GITHUB_TOKEN_GUIDE.md).
 
-| Situation | Implemented behavior and verification boundary |
+| Situation | Current behavior and verification boundary |
 |---|---|
-| Public repository without token | Anonymous GitHub request unless server fallback exists; can fail on shared IP quota. Live anonymous quota exhaustion was observed. |
-| Public repository with token | Same path with Bearer header; live collection and `/user` prove accepted authenticated bucket. |
-| Private repository with token | Requires repository access in GitHub; live validation of `No-Way-Home3` returned 200/private; full private analysis was not run. |
-| Invalid token | GitHub 401 → Baton 401 `github_authentication_failure`; no silent anonymous retry. Verified live and tests. |
-| Rate limit | GitHub 403/429 classified from remaining/message/Retry-After → Baton 429 `github_rate_limit`; primary/secondary/unknown metadata and cooldown. |
-| Permission error | 403 without rate indicators → `github_permission_failure`; organization policy/SSO may matter; tested synthetic wire response. |
-| Not found | 404 → `github_not_found`; inaccessible private resources cannot safely be distinguished from nonexistent resources. |
-| Network/timeout/API failure | 502 `github_network_failure`, 504 `github_timeout`, 502 `github_api_failure`; safe body, no raw upstream error echo. |
+| No user token, public or private | 401 github_token_required; frontend blocks connection/network and requests reentry; no anonymous/server fallback |
+| Accepted credential + public/private access | Same authenticated client; both live collections verified using an existing Git credential, not a Fine-grained PAT |
+| Invalid/expired/revoked token | 401 github_authentication_failure; no downgrade; invalid verified live, expiration/revocation equivalence verified with wire fixtures |
+| Valid token but inaccessible repository | 404 github_not_found or 403 github_permission_failure; private nonexistence and hidden access denial cannot safely be distinguished |
+| Required read operation denied with permission header | github_insufficient_permissions; required Metadata/Contents read and selection/organization guidance; header is not a grant inspection |
+| Primary/secondary/unknown limit | 429 github_rate_limit; safe remaining/reset/used/resource/retry metadata, credential-scoped bounded cooldown and disabled UI retry; no automatic aggressive retry |
+| Timeout/network/upstream failure | github_timeout / github_network_failure / github_api_failure; safe classified response, no upstream body or credential echo |
+| Empty repository | CONNECTED authorization with EMPTY_REPOSITORY and null HEAD; analysis creates no reusable fabricated commit snapshot |
 
-`GET /github/access` uses `/user` when a token exists, proving acceptance, or `/rate_limit` when anonymous. It returns safe bucket data, not account profile. Presence of a header alone does not prove authentication.
+**OBSERVED:** API paths remain repository, branches, commits, recursive tree and contents. Analysis adds `/repos/{owner}/{repo}/tarball/{full_commit_sha}` in the existing service. GitHub's redirect grant is followed only to HTTPS codeload.github.com, without forwarding the PAT. Private download URLs are ephemeral, never persisted/returned/logged; httpx URL query logging is redacted. Public requests also send the user's credential. Generic tree browsing and commit-pinned source keep their existing APIs. Branch listing remains first 100.
 
-Success observations are credential-digest/path/params scoped for 60 seconds, bounded to 256 entries/40 MB with a 4 MB entry maximum. In-flight observations coalesce by event loop and scope. Explicit refresh bypasses HEAD observations; it may reuse an identical pinned tree observation. File content caching is instance/request-collection local and cleared after collection. Rate cooldowns are credential scoped and bounded; no automatic expensive retry occurs. A new credential has an independent bucket.
+**OBSERVED:** Success observations remain credential SHA-256 digest/path/params scoped for 60 seconds, bounded to 256 entries/40 MB and 4 MB per entry. In-flight requests/analysis coalesce by event loop and credential. Explicit preflight refreshes repository/branches/HEAD; explicit analysis refresh bypasses cached HEAD. Snapshot keys remain repository/branch/full commit/folder/model 1.1; snapshot reads authorize through the current credential's HEAD. Another credential cannot reuse its authorization observation. Existing permission/HEAD observations have a documented 60-second window. File cache remains collection-local. Request and cache/snapshot-hit counters are available in debug diagnostics; production INFO per-request metrics were removed. GITHUB_TOKEN is reserved for an explicitly supplied operator diagnostic credential, not normal repository APIs.
+
+**VERIFIED:** Clearing the token removes active file handoff and blocks/unmounts repository operations; replacing it preflights the same repository before activation, clears obsolete UI evidence and preserves nonsecret configuration. Draft input is never used by file preview. Refresh keeps only nonsecret repository/team fields; saved repo accessible=false and no persisted authenticated/token_source/quota observation. It displays TOKEN REQUIRED and the last observed commit until revalidation. Other states include validating, invalid token, repository denial/not found, insufficient permissions, connected, analysis required/running, grounded/current, stale, rate limited and network failure; provider readiness stays separate.
 
 ## 12. Repository Intelligence Pipeline
 
@@ -136,7 +138,11 @@ Success observations are credential-digest/path/params scoped for 60 seconds, bo
 
 Inputs: recursive inventory, bounded sanitized text contents, owner/repo/branch/folder/commit/timestamp and omission reasons. Outputs: identity, evidence-bearing languages/technologies/project types, parsed symbols, documents/rules, directory roles/components, APIs/consumers, models, import/data relationships, package dependencies/scripts, documented requirements and reconciliation, environment names, deployment/test declarations, risks/conflicts/unknowns and completeness.
 
-Collection prioritizes recognized documentation, then manifests/configuration, then lexical code paths. It filters dependencies/build/cache/assets directories, lockfiles, known binary/model/data artifacts and sensitive paths; defaults are 100 attempted files, 200,000 bytes each and 2,000,000 total content bytes. Inventory preserves omissions even when contents are absent. Duplicate paths are fetched once. Authorization/quota/network/API failures abort rather than save a misleading partial snapshot; an isolated unreadable file can become an omission. Empty-commit repositories return an uncached empty analysis.
+Collection uses bounded in-memory TAR archive data for analysis when enabled; otherwise it uses the existing tree/content API collector. Both paths feed the same pipeline, prioritize recognized documentation, then manifests/configuration, then lexical code paths. It filters dependencies/build/cache/assets directories, lockfiles, known binary/model/data artifacts and sensitive paths; defaults are 100 attempted files, 200,000 bytes each and 2,000,000 total content bytes. Inventory preserves omissions even when contents are absent. Duplicate paths are fetched once. Authorization/quota/network/API failures abort rather than save a misleading partial snapshot; an isolated unreadable file can become an omission. Empty-commit repositories return an uncached empty analysis.
+
+**VERIFIED / OBSERVED:** Archive decision: IMPLEMENT for analysis only. Compressed download cap 20 MB, expanded TAR stream cap 40 MB (enforced before PAX/long-name parsing), entry cap 10,000, plus existing 100 selected files / 200 KB per text file / 2 MB selected content. Every archive member is checked for traversal, absolute/Windows paths, special entries, symlinks/hardlinks, duplicates and consistent commit root. The GitHub API request is pinned to the full HEAD SHA; the root must match its seven-character or full SHA naming form. The full pinned API URL is authoritative, not a guessed short SHA. No extraction to disk, import, execution or unsafe deserialization occurs. Filters, prioritization, sanitization and omission semantics remain canonical, including folder scope. Unsafe/oversized archives fall back only to the existing bounded collector; auth/quota/network/API failures abort without fallback. The existing commit-pinned tree supplies authoritative blob SHAs/modes/inventory. Selected archive bytes must reproduce the Git blob SHA before entering the pipeline; mismatch/truncated inventory falls back to bounded contents. Git LFS archive expansion cannot silently replace Git blob evidence. Archive memory cost exceeds selected-text bytes: measured public/private peaks about 33 MB/26 MB under tracemalloc; configured caps are finite, not infinite-repository support.
+
+**VERIFIED:** Before archive optimization: warm authorized public HEAD → 1 tree + 42 files = 43 collection API calls, 28.12 seconds; private → 1 tree + 100 files = 101, 133.64 seconds. Final hybrid path: cold HEAD + 1 authenticated archive API request + 1 download redirect + 1 commit-pinned tree = 4 HTTP requests, 42/100 files, same exact commits. Final hybrid without tracing took 7.46 seconds public and 54.58 seconds private. Earlier bounded-archive tracing measured 9.41 seconds public and 144.78 private, so no private latency improvement is claimed from those tracing runs. Primary GitHub collection cost becomes archive + tree; download host is counted separately. Snapshot reuse has zero collection requests; expired HEAD observations can add one authorization read. See audit for commits, measured memory and limits.
 
 The pipeline sanitizes eligible content, separates documentation from implementation, strips supported comments/docstrings, parses Python with `ast` without executing it, and uses patterns for JS/TS and other languages. Notebook code cells are parsed as JSON/text, never run. It extracts flat TS properties and simple Python fields; nested/computed type semantics remain unknown.
 
@@ -241,7 +247,7 @@ Snapshot caching is global per process but consumers reauthorize HEAD, with a 60
 
 ## 22. API Inventory
 
-**OBSERVED / VERIFIED:** Cross-checked route declarations against runtime OpenAPI and tests. `K` = `X-Baton-Key` required iff configured; `K!` = key must be configured and match for chat; `G` = optional `X-GitHub-Token`, with server fallback. All bodies/responses use JSON except framework documentation pages. Shared errors: K 401; malformed input 422; GitHub routes/consumers G errors 400/401/403/404/429/502/504. Custom code names are described in section 11. Unexpected backend failure is 500; no success response model is imposed on most routes.
+**OBSERVED / VERIFIED:** Cross-checked route declarations against runtime OpenAPI and tests. `K` = `X-Baton-Key` required iff configured; `K!` = key must be configured and match for chat; `G` = required user `X-GitHub-Token`, with no server or anonymous fallback. All bodies/responses use JSON except framework documentation pages. Shared errors: K 401; malformed input 422; GitHub routes/consumers G errors 400/401/403/404/429/502/504. Custom code names are described in section 11. Unexpected backend failure is 500; no success response model is imposed on most routes.
 
 | Method/path | Purpose/request | Headers/auth | Successful response | Additional errors | Frontend use |
 |---|---|---|---|---|---|
@@ -283,7 +289,10 @@ Canonical dataclasses include EvidenceSource, DetectedLanguage/Technology, Docum
 | VITE_BATON_API_URL | localhost:8000 fallback; local ignored file points to Render | Public URL; rebuild frontend when changing deployment value |
 | BATON_ENV | development | Informational setting; does not automatically secure production |
 | BATON_ACCESS_KEY | empty | Secret shared operator key; chat requires it; ordinary routes only enforce if set |
-| GITHUB_TOKEN | empty | Optional secret server fallback; request token wins; Render YAML does not declare it |
+| GITHUB_TOKEN | empty | Reserved explicit operator diagnostics only; never resolved for user routes; Render YAML does not declare it |
+| GITHUB_ARCHIVE_ANALYSIS | true | Analysis archive optimization; false explicitly selects bounded tree/content collection |
+| MAX_ARCHIVE_BYTES / MAX_ARCHIVE_EXPANDED_BYTES / MAX_ARCHIVE_ENTRIES | 20000000 / 40000000 / 10000 | Stream, decompression and inventory limits with bounded Settings ranges |
+| RENDER_GIT_COMMIT / VERCEL_GIT_COMMIT_SHA | infrastructure-provided | Public revision markers only; no secret environment dump |
 | GEMINI_API_KEY | empty SecretStr | Secret, backend only; chat provider needs it |
 | GEMINI_MODEL | empty, restricted identifier ≤100 chars | Nonsecret provider configuration; required for chat |
 | AI_CONTEXT_BYTES | 120000, range 16000–1000000 | Workspace context projection limit |
@@ -296,21 +305,21 @@ Canonical dataclasses include EvidenceSource, DetectedLanguage/Technology, Docum
 | MAX_FILES_PER_ANALYSIS | 100 | Attempted content fetch limit |
 | PORT | Render runtime-provided | Uvicorn listener from start command, not Settings field |
 
-**VERIFIED:** Local presence checks found a configured GitHub fallback rejected by GitHub 401, Gemini key present, model absent, Baton operator key absent. Values were not exposed. Local provider functionality is therefore unavailable. Production `/access` without a request token reported source none; authenticated request access succeeded. Dashboard secrets remain UNKNOWN.
+**VERIFIED:** This pass did not expose environment values or use GITHUB_TOKEN as a fallback. The existing Git login was accepted by GitHub; its subtype is not Fine-grained. Local provider inspection returned configured=false. Production secret/dashboard values remain UNKNOWN; current configuration must not be inferred from historic local `.env` observations.
 
 ## 25. Deployment Architecture
 
 **OBSERVED:** Frontend Vercel config rewrites paths to index.html. Backend Render config installs requirements and starts `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health `/api/health`, with secret placeholders for Gemini key/model/operator key and canonical CORS origins. Monorepo deployments require appropriate root directories (`baton-frontend`, `baton-backend-v1`); YAML does not explicitly set rootDir. Python/Node versions are not pinned in tracked config. No Docker or GitHub Actions workflow is tracked.
 
-**VERIFIED:** `https://baton-sigma-six.vercel.app` returned HTML 200; its served JavaScript contained the Render API base `https://baton-shl3.onrender.com` and the new access endpoint path. Render `/api/health` returned expected JSON 200 and accepted production-origin preflight including custom GitHub header. The new access endpoint and structured rate errors are deployed. Exact deployed Git SHA and dashboard build/root/environment settings are UNKNOWN; no version endpoint proves them. Public compiled configuration was inspected separately from local environment values.
+**VERIFIED before delivery:** Vercel HTML and Render health returned 200. Existing production no-token validation still returned 429/token_source=none; accepted request-token private validation returned 200 with canonical Vercel CORS, but without the new authentication fields. Thus old production behavior was observed; it did not prove this change deployed. This pass adds `/api/version` using only a validated RENDER_GIT_COMMIT and a frontend `baton-revision` meta marker using VERCEL_GIT_COMMIT_SHA or Git HEAD. After pushing, compare those markers with the delivered SHA; unknown/missing markers do not prove deployment. Delivery/rollout results are recorded separately from implementation test results.
 
 ## 26. Testing
 
-**VERIFIED:** Completion backend run: 266 passing tests, one Starlette/httpx deprecation warning. Frontend typecheck/lint/build pass; lint has no warnings. Browser suites cover scope transitions, missing/stale/invalid/empty/partial/spec snapshots, provider-unconfigured readiness, token secrecy, retries, late responses, artifacts/source/comparison and responsive layout. Completion regressions cover duplicate inventory paths, insufficient contracts, method mismatches, manual prompt provenance, conversation expiry and file-path security. Browser coverage includes builder payloads, team edits/deletes, measured Overview data, all nine artifact exports and New Chat without rescan. Recorded results: 29 repository-state browser checks, 8 product-completion checks, expanded workspace suite PASS and 9 live GitHub checks. All nine artifact types also returned HTTP 200 with matching snapshot identity and content hashes in real local-backend checks; pinned README source passed. PROJECT_AUDIT.md records request counts and limits. These results belong to the implementation pass and were not rerun for this documentation refresh.
+**VERIFIED:** Required-token/archive task regression run: 305 backend tests, frontend typecheck/lint/build, 29 repository-state browser checks, 8 product-completion checks, workspace browser suite and 9 live GitHub browser checks. The audit records final counts. New wire cases block every repository route without credentials, classify lifecycle/permission/transport/quota failures and prove public/private preflight. Archive fixtures cover unsafe paths/links, bounded expansion/download/entries, commit roots, folder scope, equivalent parsed intelligence/omissions, safe fallback and redirect credential isolation. All nine artifact types returned actual HTTP 200 and correct content hashes with required inputs; pinned README source matched the snapshot commit. Prompt artifacts require a task; an omitted-task request correctly returned 422 before retry with a valid task.
 
 Backend tests use isolated snapshots/provider/GitHub mocks; wire tests inspect real httpx request construction without contacting GitHub. Fixture export derives browser responses from actual canonical services; browser fixture tests are not live-provider certification. The opt-in github-live.e2e.cjs harness uses live frontend/local backend/GitHub for token/quota/collection/reuse. No code-coverage percentage was measured. No automated production CI was found.
 
-Reproduce backend from backend root with `python -B -m pytest -q -p no:cacheprovider --basetemp=<unique temporary directory>`. Frontend: `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run build`. Export browser fixtures with `python -B -m tests.export_workspace_fixtures`, run Vite locally and the four `.cjs` harnesses with Playwright/browser paths configured. For live anonymous checks, a process-only override must clear the invalid local fallback; do not edit or expose environment secrets.
+Reproduce backend from backend root with `python -B -m pytest -q -p no:cacheprovider --basetemp=<unique temporary directory>`. Frontend: `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run build`. Export browser fixtures with `python -B -m tests.export_workspace_fixtures`, run Vite locally and the four `.cjs` harnesses with Playwright/browser paths configured. For live checks, supply the request credential through the form; do not edit or expose environment secrets.
 
 ## 27. Performance / Cost Control
 
@@ -355,7 +364,7 @@ Tracked `.pyc` and `.tsbuildinfo` are generated legacy debt, not modules to edit
 
 ## 29. Dependency/Data Flows
 
-**OBSERVED:** Repository connect → batonApi validation → GitHub route → URL parse/token dependency/operator auth → GitHubService metadata → connection state. Analysis click → authorized HEAD → SHA tree → prioritized sanitized bounded files → pipeline → model → store → legacy JSON → UI + analysisRevision → workspace reinspection.
+**OBSERVED:** Repository connect → batonApi validation → GitHub route → URL parse/token dependency/operator auth → GitHubService token acceptance/repository/Contents/HEAD preflight → connection state. Analysis click → authorized HEAD → bounded archive + authoritative SHA tree (or bounded contents fallback) → prioritized sanitized bounded files → pipeline → model → store → legacy JSON → UI + analysisRevision → workspace reinspection.
 
 Context click → HEAD/snapshot exact key → member/task/type/constraints/byte-budget projection → Context Model + Markdown → copy/download. Prompt Builder canonical mode → existing workspace prompt artifact → snapshot projection → evidence export; explicit manual mode → supplied fields/repository label → formatter → USER_PROVIDED prompt. Chat → authorized context → bounded retrieval → scoped history → provider selection → strict ID/action/reasoning validation → original records + labeled prose → compact conversation references.
 
@@ -367,7 +376,7 @@ Conflict click → branch trees → exact-path overlap → display. Integration 
 
 ## 31. Known Problems
 
-**VERIFIED/OBSERVED:** Invalid local fallback GitHub token; local missing Gemini model/operator key; exhausted anonymous production quota at observation time; provider live quality remains unverified; static API wrappers/absolute aliases not fully recognized; first-page-only branches; global process-local state lost across restarts/workers. Conflict Radar failed-read suppression was corrected in this audit.
+**VERIFIED/OBSERVED:** No request token means blocked user workflow. Pre-delivery production still served old anonymous behavior; rollout requires separate SHA verification. Live Fine-grained least-permission and Gemini configuration/quality remain unverified; static API wrappers/absolute aliases not fully recognized; first-page-only branches; global process-local state lost across restarts/workers. Conflict Radar failed-read suppression was corrected in this audit.
 
 ## 32. Incomplete Features
 
@@ -385,11 +394,11 @@ Conflict click → branch trees → exact-path overlap → display. Integration 
 
 **VERIFIED:** Configured/request credential values were not found in scanned tracked content or staged audit changes; tests validate redaction, token precedence, auth failures and provider evidence constraints. This is not an exhaustive secret/security certification. **OBSERVED:** No repository execution path, frontend provider key use or credential browser persistence was found in application source.
 
-**OBSERVED:** Generic file display protection and repository-name validation are implemented; allowed environment-template collection still sanitizes assignment values. **RECOMMENDATION:** Address unbounded inbound legacy schemas, shared-key exposure/tenancy boundaries, multi-worker cache behavior and the cached revocation window. Monitor anonymous quota rather than obscuring errors. Validate reasoning/evidence relevance beyond IDs if expanding AI capabilities. Do not print credentials during diagnosis.
+**OBSERVED:** Generic file display protection and repository-name validation are implemented; allowed environment-template collection still sanitizes assignment values. **RECOMMENDATION:** Address unbounded inbound legacy schemas, shared-key exposure/tenancy boundaries, multi-worker cache behavior and the cached revocation window. Monitor authenticated quotas and preserve the no-anonymous user workflow. Validate reasoning/evidence relevance beyond IDs if expanding AI capabilities. Do not print credentials during diagnosis.
 
 ## 36. Recommended Next Steps
 
-**RECOMMENDATION:** Restore valid operator GitHub/provider configuration outside Git. Context/Prompt Builder controls and Overview measurements are now connected to existing services and verified by browser fixtures. Improve wrapper/alias contract extraction with focused fixtures. Preserve the implemented inventory-overlap and insufficient-integration-evidence labels. Add runtime/dependency version pins and CI; retire generated tracked artifacts in a separate reviewed cleanup. Consider worker-safe persistence only if deployment needs require it, without treating it as already implemented.
+**RECOMMENDATION:** Provide a user-owned Fine-grained PAT for live least-permission certification and configure the operator provider outside Git. Context/Prompt Builder controls and Overview measurements are now connected to existing services and verified by browser fixtures. Improve wrapper/alias contract extraction with focused fixtures. Preserve the implemented inventory-overlap and insufficient-integration-evidence labels. Add runtime/dependency version pins and CI; retire generated tracked artifacts in a separate reviewed cleanup. Consider worker-safe persistence only if deployment needs require it, without treating it as already implemented.
 
 ## 37. Do Not Assume
 
@@ -403,4 +412,4 @@ Conflict click → branch trees → exact-path overlap → display. Integration 
 
 ## 39. Current Project Snapshot
 
-**OBSERVED:** Two independently packaged frontend/backend directories in one repository; React JSON client + FastAPI + GitHub REST + canonical static intelligence + bounded process-local snapshots/context + constrained Gemini selection. No database or autonomous execution. **VERIFIED:** Local regression/build checks and scoped real GitHub/production checks pass; anonymous quota/provider configuration, static extraction limits and process-local deployment boundaries remain genuine issues. Application commit `ed870ea8a5b294f332cfb20b476a7bb46a2b1198` was pushed to origin/main; local and remote SHA equality was confirmed again during this documentation refresh. Deployment of that revision and live Gemini quality remain unverified. PROJECT_AUDIT.md records fixes, executed checks and remaining uncertainty.
+**OBSERVED:** React JSON client + FastAPI + required user GitHub credential + bounded archive/tree hybrid collection + one canonical static intelligence pipeline + process-local snapshots/context + constrained Gemini provider. No database or autonomous execution. **VERIFIED:** Current local checks and actual public/private GitHub collections, exact commits/blob identities, snapshot/context/artifact/source reuse and no-token/reload blocking. **UNKNOWN:** Live Fine-grained scope matrix, Gemini first/follow-up quality and rollout until independently checked. PROJECT_AUDIT.md records exact results and measured limits. Remote delivery uses a normal push to main; health alone cannot certify it.

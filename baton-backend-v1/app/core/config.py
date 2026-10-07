@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     max_file_size_bytes: int = 200_000
     max_total_context_bytes: int = 2_000_000
     max_files_per_analysis: int = 100
+    github_archive_analysis: bool = True
+    max_archive_bytes: int = Field(default=20_000_000, ge=1024, le=50_000_000)
+    max_archive_expanded_bytes: int = Field(default=40_000_000, ge=1024, le=100_000_000)
+    max_archive_entries: int = Field(default=10000, ge=1, le=50000)
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", case_sensitive=False, extra="ignore")
     @property
     def cors_origins(self) -> list[str]:

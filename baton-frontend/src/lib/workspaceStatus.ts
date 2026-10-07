@@ -4,7 +4,7 @@ import { BatonApiError } from '@/lib/api/batonApi';
 
 
 
-export type RepositoryState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ANALYZING' | 'READY' | 'NOT_ANALYZED' | 'STALE' | 'ANALYSIS_FAILED' | 'REQUEST_FAILED' | 'PERMISSION_DENIED' | 'RATE_LIMITED' | 'INVALID_REPOSITORY' | 'SNAPSHOT_INVALID' | 'EMPTY_REPOSITORY' | 'CONFIGURATION_INCOMPLETE';
+export type RepositoryState = 'TOKEN_REQUIRED' | 'TOKEN_INVALID' | 'INSUFFICIENT_PERMISSIONS' | 'REPOSITORY_NOT_FOUND' | 'NETWORK_ERROR' | 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ANALYZING' | 'READY' | 'NOT_ANALYZED' | 'STALE' | 'ANALYSIS_FAILED' | 'REQUEST_FAILED' | 'PERMISSION_DENIED' | 'RATE_LIMITED' | 'INVALID_REPOSITORY' | 'SNAPSHOT_INVALID' | 'EMPTY_REPOSITORY' | 'CONFIGURATION_INCOMPLETE';
 
 export type Severity = 'info' | 'warning' | 'error' | 'success';
 
@@ -27,7 +27,9 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
 
   if (code === 'invalid_repository_url' || status === 422) return { state: 'INVALID_REPOSITORY', severity: 'error', title: 'Invalid repository or branch', explanation: 'Check the repository URL, selected branch and request settings.' };
 
-  if (code === 'github_authentication_failure') return { state: 'PERMISSION_DENIED', severity: 'error', title: 'GitHub authentication failed', explanation: 'Check your GitHub token and repository access.' };
+  if (code === 'github_token_required') return { state: 'TOKEN_REQUIRED', severity: 'warning', title: 'GitHub token required', explanation: 'Baton uses your Fine-grained GitHub token for authenticated repository access and higher API limits. Enter your token in Repository. Required: Metadata — Read and Contents — Read.' };
+  if (code === 'github_insufficient_permissions') return { state: 'INSUFFICIENT_PERMISSIONS', severity: 'error', title: 'Insufficient repository permissions', explanation: 'Your token authenticated, but GitHub denied the required read operation. Select this repository and grant Metadata — Read and Contents — Read. Check organization approval.' };
+  if (code === 'github_authentication_failure') return { state: 'TOKEN_INVALID', severity: 'error', title: 'GitHub token is invalid or expired', explanation: 'Replace your token in Repository and validate repository access again.' };
 
   if (status === 401) return { state: 'PERMISSION_DENIED', severity: 'error', title: 'Baton authentication required', explanation: 'Enter a valid Baton access key in workspace settings.' };
 
@@ -35,14 +37,14 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
     const remaining = error.rateLimit?.remaining;
     const reset = error.rateLimit?.reset_at;
     const metadata = `${remaining !== undefined ? ` Requests remaining: ${remaining}.` : ''}${reset && remaining === 0 ? ` Reset: ${new Date(reset * 1000).toLocaleString()}.` : ''}`;
-    return { state: 'RATE_LIMITED', severity: 'warning', title: 'GitHub API limit reached', explanation: `GitHub has temporarily limited API requests, so Baton cannot analyze this repository right now.${metadata}${error.rateLimitKind === 'secondary' ? ' A secondary limit requires a backoff period.' : ''} Wait until the reset or backoff period ends. Check GitHub access in Repository to verify your token.` };
+    return { state: 'RATE_LIMITED', severity: 'warning', title: 'GitHub API limit reached', explanation: `GitHub has temporarily limited requests for this account. Baton will not retry aggressively.${metadata}${error.rateLimitKind === 'secondary' ? ' A secondary limit requires a backoff period.' : ''} Wait until the reset or backoff period ends. Check GitHub access in Repository to verify your token.` };
   }
 
   if (status === 429) return { state: 'RATE_LIMITED', severity: 'warning', title: 'Request limit reached', explanation: 'The service is busy or its quota is exhausted. Try again later.' };
   if (status === 504) return { state: 'REQUEST_FAILED', severity: 'error', title: 'Request timed out', explanation: 'The service took too long to respond. Retry the operation.' };
   if (status === 403) return { state: 'PERMISSION_DENIED', severity: 'error', title: 'GitHub denied the request', explanation: 'Check token permissions and organization access. GitHub may also restrict requests temporarily.' };
 
-  if (code === 'github_not_found' || status === 404) return { state: 'INVALID_REPOSITORY', severity: 'error', title: 'Repository or branch not found', explanation: 'Check the URL and branch. Private repositories need a GitHub token with access.' };
+  if (code === 'github_not_found' || status === 404) return { state: 'REPOSITORY_NOT_FOUND', severity: 'error', title: 'Repository or branch not found', explanation: 'Check the URL and branch. Private repositories need a GitHub token with access.' };
 
   if (code === 'empty_repository') return { state: 'EMPTY_REPOSITORY', severity: 'info', title: 'No commits to analyze', explanation: 'Add a commit to this repository, then analyze its branch.' };
 
@@ -52,7 +54,7 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
 
   if (code === 'snapshot_invalid') return repositoryMessage('SNAPSHOT_INVALID');
 
-  if (code === 'github_network_failure' || code === 'network_failure' || status === 0) return { state: 'REQUEST_FAILED', severity: 'error', title: 'Could not reach the repository service', explanation: 'Check your connection and retry. The backend or GitHub may be temporarily unavailable.' };
+  if (code === 'github_network_failure' || code === 'network_failure' || status === 0) return { state: 'NETWORK_ERROR', severity: 'error', title: 'Could not reach the repository service', explanation: 'Check your connection and retry. The backend or GitHub may be temporarily unavailable.' };
 
   if (code === 'ai_configuration_incomplete') return repositoryMessage('CONFIGURATION_INCOMPLETE');
 

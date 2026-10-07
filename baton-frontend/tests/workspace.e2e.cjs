@@ -28,7 +28,7 @@ let browser, page;
     else if (url.pathname.endsWith('/artifacts')) response = fixture.artifact;
     else if (url.pathname.endsWith('/compare')) response = fixture.comparison;
     else if (url.pathname.includes('/analysis/')) response = { metadata: { commit: 'commit-1' } };
-    else response = { status: 'ok', service: 'baton-backend' };
+    else response = url.pathname.endsWith('/validate-repository') ? { owner: 'example', repository: 'project', default_branch: 'main', accessible: true, authenticated: true, token_source: 'request', rate_limit: {} } : { status: 'ok', service: 'baton-backend' };
     await route.fulfill({ json: response, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' } });
   });
   await page.addInitScript(() => {
@@ -41,6 +41,8 @@ let browser, page;
   });
   await page.goto(process.env.BATON_PREVIEW_URL || 'http://127.0.0.1:5173/');
   await page.getByRole('button', { name: /Enter Mission Control/i }).first().click();
+ await page.getByLabel('GitHub token for connected repository').fill('fixture-browser-credential');
+ await page.getByRole('button', { name: 'Validate repository access', exact: true }).click();
   await page.getByRole('heading', { name: /Ask Baton/ }).waitFor();
   await page.getByText('Current · complete coverage', { exact: true }).waitFor();
   await page.getByRole('button', { name: /Project scope/ }).click();

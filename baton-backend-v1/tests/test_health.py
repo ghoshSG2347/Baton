@@ -15,6 +15,12 @@ def test_api_health_alias():
     assert r.status_code == 200
     assert r.json() == {"status": "ok", "service": "baton-backend"}
 
+def test_revision_reports_only_valid_commit_hash(monkeypatch):
+    monkeypatch.setenv('RENDER_GIT_COMMIT', 'a' * 40)
+    assert client.get('/api/version').json()['revision'] == 'a' * 40
+    monkeypatch.setenv('RENDER_GIT_COMMIT', 'not-a-revision')
+    assert client.get('/api/version').json()['revision'] is None
+
 def test_access_key_security(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "baton_access_key", "secret-test-key")
@@ -43,9 +49,8 @@ def test_github_token_precedence(monkeypatch):
     # Request token takes precedence over env token
     assert github_token("request-token-456") == "request-token-456"
 
-    # Environment token is used when request token is None
-    assert github_token(None) == "env-token-123"
-
-    # None returned when neither is set
-    monkeypatch.setattr(settings, "github_token", "")
-    assert github_token(None) is None
+    import pytest
+    from app.core.exceptions import BatonError
+    with pytest.raises(BatonError) as failure:
+        github_token(None)
+    assert failure.value.code == 'github_token_required'

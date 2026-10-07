@@ -59,14 +59,15 @@ def test_fastapi_request_token_reaches_all_analysis_wire_requests(wire, monkeypa
 
 @pytest.mark.anyio
 async def test_public_and_authenticated_headers_and_token_scoped_cache(wire):
-    await GitHubService().commit('o', 'r', 'main')
+    with pytest.raises(BatonError) as missing:
+        await GitHubService().commit('o', 'r', 'main')
+    assert missing.value.code == 'github_token_required'
     await GitHubService('first').commit('o', 'r', 'main')
     await GitHubService('first').commit('o', 'r', 'main')
     await GitHubService('second').commit('o', 'r', 'main')
-    assert len(wire) == 3
-    assert 'Authorization' not in wire[0][1]
-    assert wire[1][1]['Authorization'] == 'Bearer first'
-    assert wire[2][1]['Authorization'] == 'Bearer second'
+    assert len(wire) == 2
+    assert wire[0][1]['Authorization'] == 'Bearer first'
+    assert wire[1][1]['Authorization'] == 'Bearer second'
 
 
 @pytest.mark.anyio
@@ -118,7 +119,7 @@ def test_access_check_acceptance_and_cached_safe_metadata(wire):
         assert response.status_code == 200
         data = response.json()
         assert data['authenticated'] and data['token_source'] == 'request'
-        assert data['rate_limit'] == {'limit': 5000, 'remaining': 4990, 'used': 10, 'reset_at': 2000000000}
+        assert data['rate_limit'] == {'limit': 5000, 'remaining': 4990, 'used': 10, 'reset_at': 2000000000, 'resource': None}
         assert 'canary' not in response.text and 'private@example.org' not in response.text
     assert len(wire) == 1
 

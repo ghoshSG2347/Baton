@@ -3,7 +3,7 @@ from app.main import app
 from app.services.integration_service import compare, normalize_endpoint
 from unittest.mock import AsyncMock, patch
 
-client = TestClient(app)
+client = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'})
 
 def test_integration_single_branch_ready():
     r = client.post("/api/v1/integration", json={"owner": "o", "repo": "r", "branch": "main"})

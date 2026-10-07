@@ -78,7 +78,7 @@ def test_generic_display_blocks_environment_templates_before_network():
     from fastapi.testclient import TestClient
     from app.main import app
     with patch('app.api.routes.github.GitHubService.file', new_callable=AsyncMock) as read:
-        response = TestClient(app).get('/api/v1/github/file', params={'owner':'example','repo':'project','branch':'main','path':'.env.example'})
+        response = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'}).get('/api/v1/github/file', params={'owner':'example','repo':'project','branch':'main','path':'.env.example'})
     assert response.status_code == 403
     assert response.json()['code'] == 'sensitive_source_path'
     read.assert_not_called()

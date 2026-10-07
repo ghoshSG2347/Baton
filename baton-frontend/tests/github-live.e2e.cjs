@@ -31,49 +31,25 @@ async function check(name, run) { await run(); checks.push(name); console.log('P
   await page.getByRole('button', { name: /Enter Mission Control/i }).first().click();
   await page.getByRole('button', { name: 'Repository', exact: true }).click();
   await page.getByPlaceholder('https://github.com/owner/repository').fill('https://github.com/ghoshSG2347/Alzheimer-Disease-Prediction-Model');
-  const validation = page.waitForResponse(r => r.url().endsWith('/validate-repository') && r.request().method() === 'POST');
-  await page.getByRole('button', { name: 'VALIDATE REPOSITORY', exact: true }).click();
-  const response = await validation;
-  const connected = response.status() === 200;
-  await check('A: public connection succeeds or correctly reports an exhausted anonymous bucket', async () => {
-    assert([200, 429].includes(response.status()), 'Unexpected public connection failure.');
-    assert(calls.some(c => c.path.endsWith('/validate-repository') && !c.tokenPresent));
+  await check('public connection without token is blocked before network', async () => {
+    assert(await page.getByRole('button', {name:'CONNECT REPOSITORY',exact:true}).isDisabled());
+    assert(!calls.some(c => c.path.endsWith('/validate-repository')));
   });
-  if (connected) {
-    await page.getByLabel('GitHub token for connected repository').waitFor();
-    await page.getByRole('button', { name: 'Check GitHub access', exact: true }).click();
-    await page.getByText(/Using public unauthenticated access/).waitFor();
-    console.log('Public access: ' + await page.getByText(/Using public unauthenticated access/).innerText());
-    await page.getByRole('button', { name: 'AI workspace', exact: true }).click();
-    await page.locator('.ai-refresh:not(:disabled)').waitFor({ timeout: 60000 });
-    await page.locator('.ai-refresh').click();
-    await page.waitForFunction(() => !document.querySelector('.ai-refresh .ai-spin'), null, { timeout: 120000 });
-    await check('A: unauthenticated analysis succeeds or reports the exhausted bucket', async () => {
-      const text = await page.locator('.ai-state-row').innerText();
-      assert(text.includes('Current') || text.includes('GitHub API limit reached'));
-      console.log('Public analysis status: ' + text.replace(/\s+/g, ' '));
-    });
-    await page.getByRole('button', { name: 'Repository', exact: true }).click();
-  } else {
-    await page.getByRole('heading', { name: 'GitHub API limit reached', exact: true }).waitFor();
-  }
-  const input = connected ? page.getByLabel('GitHub token for connected repository') : page.getByPlaceholder('ghp_...');
-  const submit = () => page.getByRole('button', { name: connected ? 'Check GitHub access' : 'VALIDATE REPOSITORY', exact: true }).click();
-  await input.fill('invalid-audit-token'); await submit();
-  await check('C: invalid token is authentication failure, not rate limit', async () => {
-    await page.getByRole('heading', { name: 'GitHub authentication failed', exact: true }).waitFor();
+  const input = page.getByLabel('Fine-grained GitHub token');
+  await input.fill('invalid-audit-token');
+  await page.getByRole('button', {name:'CONNECT REPOSITORY',exact:true}).click();
+  await check('invalid token fails authentication without anonymous retry', async () => {
+    await page.getByRole('heading', {name:'GitHub token is invalid or expired',exact:true}).waitFor();
   });
-  await input.fill(token); await submit();
-  if (!connected) {
-    await page.getByLabel('GitHub token for connected repository').waitFor();
-    await page.getByRole('button', { name: 'Check GitHub access', exact: true }).click();
-  }
-  await page.getByText(/GitHub accepted the token/).waitFor();
-  await check('B: token accepted through Baton shared GitHubService and authenticated bucket', async () => {
-    const text = await page.getByText(/GitHub accepted the token/).innerText();
-    assert(text.includes('5000'), 'Expected authenticated GitHub bucket.');
-    console.log('Authenticated access: ' + text);
+  await input.fill(token);
+  await page.getByRole('button', {name:'CONNECT REPOSITORY',exact:true}).click();
+  await page.getByLabel('GitHub token for connected repository').waitFor();
+  await page.getByRole('button', {name:'Validate repository access',exact:true}).click();
+  await check('token and repository accepted with authenticated quota', async () => {
+    await page.getByText(/GitHub accepted the token/).waitFor();
+    assert((await page.getByText(/GitHub accepted the token/).innerText()).includes('5000'));
   });
+  console.log('Fine-grained token format available: ' + token.startsWith('github_pat_'));
   await page.getByRole('button', { name: 'AI workspace', exact: true }).click();
   await page.locator('.ai-refresh:not(:disabled)').waitFor({ timeout: 60000 });
   const before = calls.filter(c => c.path.includes('/analysis/')).length;
@@ -122,18 +98,15 @@ async function check(name, run) { await run(); checks.push(name); console.log('P
   const reloadStart = calls.length;
   await page.reload();
   await page.getByRole('button', { name: /Enter Mission Control/i }).first().click();
-  await page.waitForFunction(() => {
-    const status = document.querySelector('.ai-lifecycle')?.textContent;
-    return status === 'Current' || status === 'GitHub API limit reached';
-  }, null, {timeout:60000});
-  await page.getByRole('button', {name:'Repository',exact:true}).click();
+  await page.getByText('GitHub token required. Re-enter your token to restore access to this remembered repository.').waitFor();
+  assert(!calls.slice(reloadStart).some(c => c.path.includes('/api/v1/')));
   await page.getByLabel('GitHub token for connected repository').fill(token);
-  await page.getByRole('button', {name:'Check GitHub access',exact:true}).click();
-  await page.getByText(/GitHub accepted the token/).waitFor();
+  await page.getByRole('button', {name:'Validate repository access',exact:true}).click();
+  await page.getByRole('heading', {name:/Ask Baton/}).waitFor();
   await page.getByRole('button', {name:'AI workspace',exact:true}).click();
   await page.locator('.ai-refresh:not(:disabled)').waitFor({timeout:60000});
   await check('reload clears token; re-entry restores authenticated snapshot without a rescan', async () => {
-    assert(calls.slice(reloadStart).some(c => c.path.endsWith('/inspect') && !c.tokenPresent));
+    assert(!calls.slice(reloadStart).some(c => c.path.endsWith('/inspect') && !c.tokenPresent));
     assert(calls.filter(c => c.path.includes('/analysis/')).length === after);
     assert(await page.locator('.ai-grounding').innerText() === 'Repository grounded');
   });

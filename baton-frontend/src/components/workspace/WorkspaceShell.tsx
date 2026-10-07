@@ -177,7 +177,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
             </>
           )}
           <span className="text-baton-border">|</span>
-          <StatusIndicator status={state.repo || state.isDemoMode ? 'connected' : 'idle'} />
+          <StatusIndicator status={(state.repo && state.githubToken) || state.isDemoMode ? 'connected' : 'idle'} />
           {(state.repo || state.isDemoMode) && (
             <>
               <span className="text-baton-border">|</span>

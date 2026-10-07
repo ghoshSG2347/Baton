@@ -10,7 +10,8 @@ async def access(token=Depends(github_token)):
  return await GitHubService(token).access()
 @router.post("/validate-repository")
 async def validate(req:RepositoryRequest,token=Depends(github_token)):
- o,r=GitHubService.validate_repo_url(req.repo_url); d=await GitHubService(token).repository(o,r); return {"owner":o,"repository":r,"default_branch":d.get("default_branch"),"visibility":d.get("visibility"),"accessible":True}
+ o,r=GitHubService.validate_repo_url(req.repo_url)
+ return await GitHubService(token).validate_connection(o,r)
 @router.get("/branches")
 async def branches(owner:str,repo:str,token=Depends(github_token)): return {"branches":[{"name":x["name"],"sha":x["commit"]["sha"]} for x in await GitHubService(token).branches(owner,repo)]}
 @router.get("/tree")

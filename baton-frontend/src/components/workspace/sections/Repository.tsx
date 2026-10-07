@@ -35,6 +35,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   useEffect(() => () => { validationEpoch.current++; fileEpoch.current++; }, []);
   useEffect(() => {
     if (!state.repo || state.isDemoMode) return;
+    if (!state.githubToken) { setBranches([]); setTree([]); setSelectedFile(null); return; }
     let active = true;
     setBranches([]);
     batonApi.getBranches(state.repo.owner, state.repo.repository, state.githubToken || undefined)
@@ -44,7 +45,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   }, [state.repo, state.githubToken, state.isDemoMode]);
   useEffect(() => {
     setSelectedFile(null); setExpandedDirs(new Set()); fileEpoch.current++;
-    if (!state.repo || !state.selectedBranch) { setTree([]); return; }
+    if (!state.repo || !state.selectedBranch || (!state.isDemoMode && !state.githubToken)) { setTree([]); return; }
     if (state.isDemoMode) { setTree(DEMO_TREE); return; }
     let active = true; setTree([]); setTreeLoading(true); setError(null);
     batonApi.getTree(state.repo.owner, state.repo.repository, state.selectedBranch, '', state.githubToken || undefined)
@@ -55,7 +56,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   }, [state.repo, state.selectedBranch, state.githubToken, state.isDemoMode]);
   useEffect(() => {
     const reference = state.fileReference;
-    if (!reference) return;
+    if (!reference || !state.githubToken) return;
     let active = true;
     setSelectedFile(null); setFileLoading(true); setError(null);
     batonApi.source({ ...reference.request, path: reference.path }, state.githubToken || undefined)
@@ -66,7 +67,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   }, [state.fileReference, state.githubToken]);
 
   const handleValidate = async () => {
-    if (!urlInput.trim() || validateState === 'loading' || (retryBlocked && sameAccess)) return;
+    if (!urlInput.trim() || (!state.isDemoMode && !(tokenInput.trim() || state.githubToken)) || validateState === 'loading' || (retryBlocked && sameAccess)) return;
     const current = ++validationEpoch.current;
     const effectiveToken = tokenInput.trim() || state.githubToken;
     lastAccessToken.current = effectiveToken;
@@ -97,6 +98,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       state.setRepoUrl(urlInput);
       state.setRepo(result);
       state.setGithubToken(effectiveToken);
+      setTokenInput('');
       state.setSelectedBranch(result.default_branch || '');
       state.setSelectedFolder('');
       setValidateState('success');
@@ -108,17 +110,27 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
     }
   };
 
-  const handleBranchSelect = (branchName: string) => state.setSelectedBranch(branchName);
+  const handleBranchSelect = (branchName: string) => {
+    state.setSelectedBranch(branchName);
+    if (state.repo) state.setRepo({ ...state.repo, current_head: branches.find(branch => branch.name === branchName)?.sha || null });
+  };
 
   const checkAccess = async () => {
     if (accessBusy || (retryBlocked && sameAccess)) return;
     setAccessBusy(true); setAccess(null); setError(null);
     const token = tokenInput.trim() || state.githubToken;
     lastAccessToken.current = token;
+    const current = ++validationEpoch.current;
     try {
-      const result = await batonApi.checkGitHubAccess(token || undefined);
-      state.setGithubToken(token); setTokenInput(''); setAccess(result);
+      if (!state.repo) return;
+      const result = await batonApi.validateRepository(state.repoUrl, token || undefined);
+      if (current !== validationEpoch.current) return;
+      if (result.owner !== state.repo.owner || result.repository !== state.repo.repository) return;
+      state.setRepo(result);
+      state.setGithubToken(token); setTokenInput(''); setAccess({ authenticated: result.authenticated === true, token_present: true, upstream_status: 200, token_source: 'request', rate_limit: result.rate_limit || {} });
     } catch (err) {
+      if (current !== validationEpoch.current) return;
+      state.setGithubToken('');
       setError(err instanceof Error ? err : new Error('GitHub access could not be checked.'));
     } finally { setAccessBusy(false); }
   };
@@ -139,7 +151,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
         state.repo.repository,
         state.selectedBranch,
         path,
-        tokenInput || state.githubToken || undefined
+        state.githubToken || undefined
       );
       if (current === fileEpoch.current && selectedScope === scopeRef.current) setSelectedFile({ path: fileData.path, content: fileData.content });
     } catch (err) {
@@ -203,25 +215,29 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
             </div>
             <div>
               <label className="block font-mono text-[10px] tracking-wider text-baton-text-tertiary uppercase mb-2">
-                GitHub Token (optional — for private repos or higher rate limits)
+                Fine-grained GitHub token (required)
               </label>
               <input
                 type="password"
+                autoComplete="off"
+                aria-label="Fine-grained GitHub token"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="ghp_..."
+                placeholder="github_pat_..."
                 className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2.5 text-sm text-baton-white placeholder:text-baton-text-tertiary outline-none font-mono"
               />
             </div>
+            <p className="text-xs text-baton-text-secondary">Baton uses your token for authenticated repository access and higher API limits. Required permissions: Metadata — Read; Contents — Read. Select the repository you want Baton to analyze. Organization approval may also be required.</p>
+            <a className="text-xs text-baton-accent underline" href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer">How to create a Fine-grained token</a>
             <div className="flex items-center gap-3">
-              <Button variant="primary" onClick={handleValidate} disabled={validateState === 'loading' || !urlInput.trim() || (retryBlocked && sameAccess)}>
+              <Button variant="primary" onClick={handleValidate} disabled={validateState === 'loading' || !urlInput.trim() || (!state.isDemoMode && !(tokenInput.trim() || state.githubToken)) || (retryBlocked && sameAccess)}>
                 {validateState === 'loading' ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
                     VALIDATING...
                   </>
                 ) : (
-                  'VALIDATE REPOSITORY'
+                  'CONNECT REPOSITORY'
                 )}
               </Button>
             </div>
@@ -239,16 +255,21 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
         <>
           <Panel label="GITHUB ACCESS" className="mb-6">
             <div className="p-4 space-y-3">
-              <p className="text-xs text-baton-text-tertiary">GitHub tokens are optional and kept only in memory. Re-enter your token after reloading the browser.</p>
-              <input aria-label="GitHub token for connected repository" type="password" autoComplete="off" value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} placeholder={state.githubToken ? 'Token present in this tab' : 'Optional GitHub token'} className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2.5 text-sm text-baton-white outline-none font-mono" />
-              <Button variant="secondary" onClick={checkAccess} disabled={accessBusy || (retryBlocked && sameAccess)}>{accessBusy ? 'Checking access…' : 'Check GitHub access'}</Button>
-              {access && <p role="status" className="text-xs text-baton-text-secondary">{access.authenticated ? 'GitHub accepted the token.' : 'Using public unauthenticated access.'} Token source: {access.token_source}. Requests remaining: {access.rate_limit.remaining ?? 'unavailable'} / {access.rate_limit.limit ?? 'unavailable'}.{access.rate_limit.reset_at ? ` Reset: ${new Date(access.rate_limit.reset_at * 1000).toLocaleString()}.` : ''}</p>}
+              <p className="text-xs text-baton-text-tertiary">Your Fine-grained GitHub token is required and kept only in memory. Re-enter it after reloading. Replacing it validates access to this repository again.</p>
+              <input aria-label="GitHub token for connected repository" type="password" autoComplete="off" value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} placeholder={state.githubToken ? 'Token present in this tab' : 'GitHub token required'} className="w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2.5 text-sm text-baton-white outline-none font-mono" />
+              <Button variant="secondary" onClick={checkAccess} disabled={accessBusy || !(tokenInput.trim() || state.githubToken) || (retryBlocked && sameAccess)}>{accessBusy ? 'Checking access…' : 'Validate repository access'}</Button>
+              <Button variant="ghost" onClick={() => { state.setGithubToken(''); setTokenInput(''); setAccess(null); setError(null); }}>Clear GitHub token</Button>
+              <p className="text-xs text-baton-text-secondary">Baton uses your token for authenticated repository access and higher API limits. Required permissions: Metadata — Read; Contents — Read. Select the repository you want Baton to analyze. Organization approval may also be required.</p>
+            <a className="text-xs text-baton-accent underline" href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer">How to create a Fine-grained token</a>
+              {access && <p role="status" className="text-xs text-baton-text-secondary">{access.authenticated ? 'GitHub accepted the token.' : 'GitHub token required.'} Token source: {access.token_source}. Requests remaining: {access.rate_limit.remaining ?? 'unavailable'} / {access.rate_limit.limit ?? 'unavailable'}.{access.rate_limit.reset_at ? ` Reset: ${new Date(access.rate_limit.reset_at * 1000).toLocaleString()}.` : ''}</p>}
             </div>
           </Panel>
+          <p className="text-xs text-baton-text-secondary mb-4">{state.repo.current_head ? `${state.githubToken ? 'Current commit' : 'Last observed commit'}: ${state.repo.current_head}` : 'Commit unavailable'}</p>
+          {!state.githubToken && !state.isDemoMode && <p role="status" className="mb-4 text-sm text-baton-warning">GitHub token required. Re-enter your token to restore access to this remembered repository.</p>}
           {/* Change repository action */}
           <div className="flex items-center justify-between mb-4">
             <div>
-              <span className="font-mono text-[11px] text-baton-text-tertiary">CONNECTED TO</span>
+              <span className="font-mono text-[11px] text-baton-text-tertiary">{state.githubToken || state.isDemoMode ? 'CONNECTED TO' : 'TOKEN REQUIRED FOR'}</span>
               <span className="font-mono text-[11px] text-baton-text-highlight ml-2">{state.repo.owner}/{state.repo.repository}</span>
             </div>
             <button

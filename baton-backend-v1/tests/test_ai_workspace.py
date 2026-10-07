@@ -279,7 +279,7 @@ async def test_missing_provider_config_is_explicit_not_simulated_chat(monkeypatc
 
 
 def test_chat_requires_operator_auth_and_validation_does_not_echo_inputs(monkeypatch):
-    client = TestClient(app)
+    client = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'})
     monkeypatch.setattr(get_settings(), 'baton_access_key', '')
     assert client.post('/api/v1/workspace/chat', json=request(ChatRequest, message='Inspect').model_dump()).status_code == 503
     monkeypatch.setattr(get_settings(), 'baton_access_key', 'synthetic-operator-key')
@@ -292,7 +292,7 @@ def test_all_json_responses_redact_configured_provider_key(monkeypatch):
     secret = 'synthetic-global-provider-credential'
     monkeypatch.setattr(get_settings(), 'gemini_api_key', SecretStr(secret))
     monkeypatch.setattr(ContextSnapshotService, 'load', AsyncMock(return_value=analyze({secret + '.py': 'def main(): pass'})))
-    response = TestClient(app).post('/api/v1/context', json={'owner': 'example', 'repo': 'project', 'branch': 'main'})
+    response = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'}).post('/api/v1/context', json={'owner': 'example', 'repo': 'project', 'branch': 'main'})
     assert response.status_code == 200 and secret not in response.text
 
 

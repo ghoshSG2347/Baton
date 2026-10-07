@@ -56,6 +56,9 @@ async function apiRequest<T>(
   options: RequestInit = {},
   githubToken?: string
 ): Promise<T> {
+  if (/^\/api\/v1\/(github|analysis|context|integration|workspace)(\/|$)/.test(endpoint) && !githubToken?.trim()) {
+    throw new BatonApiError('GitHub token required. Enter your Fine-grained GitHub token in Repository.', 401, undefined, 'github_token_required');
+  }
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${BASE_URL}${normalizedEndpoint}`;
 
@@ -199,7 +202,7 @@ export const batonApi = {
     repoUrl: string,
     githubToken?: string
   ): Promise<RepoValidation> {
-    return apiRequest<RepoValidation>(
+    const result = await apiRequest<RepoValidation>(
       '/api/v1/github/validate-repository',
       {
         method: 'POST',
@@ -207,6 +210,10 @@ export const batonApi = {
       },
       githubToken
     );
+    if (result.authenticated !== true || result.token_source !== 'request' || result.accessible !== true) {
+      throw new BatonApiError('Repository access was not authenticated. Validate your GitHub token again.', 502, undefined, 'github_authentication_failure');
+    }
+    return result;
   },
 
   async getBranches(owner: string, repo: string, githubToken?: string): Promise<Branch[]> {

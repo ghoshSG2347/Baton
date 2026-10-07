@@ -18,6 +18,10 @@ export interface FileContent {
 }
 
 export interface RepoValidation {
+  authenticated?: boolean;
+  token_source?: 'request';
+  current_head?: string | null;
+  rate_limit?: { limit?: number; remaining?: number; used?: number; reset_at?: number };
   owner: string;
   repository: string;
   default_branch?: string | null;

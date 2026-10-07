@@ -1,115 +1,145 @@
-# Baton — Product Completion and Verification Audit
+# Baton — User Token / GitHub Access Audit
 
-## Scope and baseline
+## Scope and identity
 
-Updated 2026-10-07 in the Windows PowerShell workspace. Repository: https://github.com/ghoshSG2347/Baton. Branch: main. Starting commit: `96f1e37a3ca252b1b9684c3d4a57ac7eaf27ac65`. Initial working tree clean; origin fetch/push matched the requested repository. The user authorized implementation, verification, documentation, commit and ordinary push. No force push, reset, destructive cleanup, framework replacement, new database or new intelligence/provider architecture was used.
+Audit date: 2026-10-07 (Asia/Calcutta). Repository: https://github.com/ghoshSG2347/Baton. Opened clean at `135e3c3` on `baton-current`; fetched and fast-forwarded to current remote-main baseline `fe4059a` before editing. Main is already checked out in another worktree, so delivery uses a normal `HEAD:main` push from this isolated checkout. No force push, reset or unrelated-checkout modification is authorized/needed.
 
-[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) is the canonical subsystem reference. This report replaces obsolete completion findings in place. OBSERVED denotes inspected implementation; VERIFIED denotes an executed check with a stated scope; UNKNOWN denotes unavailable evidence. Local fixtures are not live Gemini or production deployment certification.
+Final implementation commit: the commit containing this report and the reconciled PROJECT_CONTEXT.md. Resolve the full SHA using `git log -1 -- PROJECT_AUDIT.md`; a tracked document cannot embed its own final hash. Push and rollout are checked separately and reported after delivery.
 
-## Root causes and disposition
+Evidence labels: OBSERVED = inspected source/configuration, VERIFIED = executed test with stated scope, UNKNOWN = no evidence, INFERRED = inference, RECOMMENDATION = future work. Fixture tests are not real Fine-grained PAT or Gemini certification.
 
-| Finding | Root cause | Result |
+## Root causes and fixes
+
+| Finding | Root cause | Final behavior |
 |---|---|---|
-| Context controls disconnected | Frontend submitted only repository/branch/folder/include_markdown | FIXED: task, member boundaries, context type, constraints and UTF-8 byte limit use the existing ContextRequest/API |
-| Misleading context metadata | Commit extracted from Markdown regex; timestamp fabricated from browser time | FIXED: structured context identity supplies branch, commit and generation timestamp |
-| Initial context state race | Folder synchronization always created a new configuration object, including an unchanged initial folder | FIXED: unchanged folder retains its configuration object; scoped epochs ignore obsolete results |
-| Prompt surface not grounded | Standalone manual endpoint used default Baton label and ignored teammate scope | FIXED: canonical mode uses existing prompt artifact; explicit manual mode passes actual label and marks USER_PROVIDED text |
-| No member edit | Team exposed add/delete only | FIXED: edit uses existing persisted state, retains ID and ownership/protection fields; reload tested |
-| Demo contamination | Loading a demo team could switch a connected workspace into demo mode | FIXED: demo-team loading is unavailable on connected live repositories |
-| Live Overview fabricated readiness/activity | FRESH, 84 files, 3.2K tokens and demo events were unconditional | FIXED: existing inspection supplies measured coverage/identity and actual snapshot event; unavailable data is Unknown |
-| New Chat retained draft | Handler cleared turns/ID but not composer text | FIXED: draft clears, pending chat aborts, snapshot/scopes remain, no analysis/inspection request |
-| Expired conversation retry loop | All HTTP 409 responses treated as snapshot errors, stale conversation ID retained | FIXED: typed conversation errors; unusable IDs clear; error remains actionable without snapshot rebuild |
-| False cross-branch signal | Repeated path within one branch counted twice; message asserted changed files | FIXED: per-branch path deduplication and inventory-presence wording |
-| Empty integration falsely compatible | `not unmatched_calls` was true with no consumers/routes | FIXED: compatible=null and insufficient evidence; UI cannot report ready |
-| Legacy method mismatch | Method stripped before route comparison | FIXED: explicitly different methods do not match; unqualified legacy paths remain unknown-method matches |
-| Unvalidated response identity/integrity | Several frontend workspace calls only cast JSON | FIXED: chat/artifact/source/comparison identity guards; chat structure and artifact type/filename/SHA-256 checks |
-| Generic source policy weaker than workspace source | Arbitrary paths and owner/repository values accepted | FIXED: existing URL grammar validates all service repository entry points; generic source rejects traversal/credential paths before network |
-| Provider failures lacked codes | Configuration/provider failures exposed status/text only | FIXED: safe AI configuration/provider/session/path codes reach existing error UI |
+| Anonymous public-repository quota | Dependency and service both selected request → server → anonymous | Both fallbacks removed; required request header and defensive service network guard |
+| Connection did not prove token access | Metadata alone can be readable publicly | /user acceptance, fresh metadata, Contents-read branch list, fresh default HEAD preflight |
+| Inconsistent credentials | File preview could use an unvalidated input draft | Every connected operation uses the validated memory credential |
+| Refresh claimed connection | Persisted repo identity remained while token disappeared | TOKEN REQUIRED gate, no repository network until reentry; no persisted authentication/quota observation |
+| Replacement/clear retained evidence | Token changes left file handoff/UI observations | Re-preflight repository, remove handoff, scoped UI cancellation/reinitialization; clear blocks operations |
+| Duplicate quota panels | Independent automatic HEAD inspection and branch request could both fail | Ask Baton branches wait for successful HEAD; failed inspection cannot launch branch load; individual operation error has one owner |
+| Many analysis requests | One recursive tree plus per-file reads | Bounded archive + authoritative pinned tree, one canonical pipeline; contents fallback only for archive safety/correctness rejection |
+| Archive evidence risk | Archive alone lacks authoritative blob/mode evidence; LFS may expand bytes | Pinned tree preserved; selected bytes must match Git blob SHA; comparisons and document blob provenance retained |
+| No rollout identity | Health 200 cannot prove revision | Backend /api/version validates only RENDER_GIT_COMMIT; frontend baton-revision meta uses build SHA |
+| Noisy instrumentation | Per-request/analysis metrics were INFO | Debug-only counters/metadata; temporary private download grant redacted in httpx URL logs |
 
-All changes preserve the visual design, React/FastAPI structure, canonical analyzer, snapshot store, context generator, retrieval and Gemini adapter. No new GitHub implementation exists.
+## Authentication, permissions and security
 
-## Workflow verification matrix
+VERIFIED: User memory state → batonApi X-GitHub-Token → required FastAPI dependency → existing GitHubService → Bearer GitHub REST. Public and private routes share the path. Normal user APIs never select GITHUB_TOKEN or anonymous access. Conflict Radar obtains authenticated trees before its pure overlap computation; Integration uses the same AnalysisService credential; context/artifacts/chat/compare authorize snapshot reads through the current credential. Manual prompt formatting and health/revision endpoints do not operate on GitHub.
 
-| Workflow | Status and evidence |
-|---|---|
-| Landing/connect | VERIFIED WORKING: browser connection and actual GitHub validation; original No-Way-Home3 validation returns 200 in production |
-| Repository/branches | VERIFIED WORKING within existing first-100-branches boundary; safe distinct auth/quota/network/not-found states |
-| HEAD versus snapshot | VERIFIED WORKING: fixture tests preserve current HEAD, block stale/mismatched identity and retain pinned commits |
-| Explicit analysis | VERIFIED WORKING: no implicit context/chat collection, double-click dedup, same-state reuse, force refresh and failed/late analysis tests |
-| Snapshots | VERIFIED WORKING locally; PARTIALLY WORKING operationally because stores remain process-local and eviction/restart can lose state |
-| Working Context | VERIFIED WORKING: missing/running/ready/stale/invalid/empty/partial/spec/provider-unconfigured states; omissions remain explicit |
-| AI Workspace | VERIFIED WORKING for context/artifacts/source/compare; live Gemini is BLOCKED by operator configuration |
-| New Chat | FIXED and fixture-verified: clears draft/history/ID, preserves snapshot, does not rescan; first submitted question creates backend ID, follow-up sends it |
-| Chat/citations/actions | VERIFIED WORKING in service/browser fixtures, including binding, revision, ownership/evidence validation and session expiry; live provider quality UNKNOWN |
-| Artifacts | VERIFIED WORKING: all nine types preview/download in browser; real local-backend/snapshot HTTP checks return 200 with matching commit/hash |
-| Source | VERIFIED WORKING: pinned README HTTP read; fixture navigation preserves chat; traversal/credential paths rejected before network |
-| Compare | VERIFIED WORKING in service/browser fixtures; diff-of-retained-inventory semantics, no Git merge; live two-branch production certification not performed |
-| Team | FIXED: add/edit/delete, ID preservation and persistence/reload tested; no server team database or verified GitHub ownership |
-| Context Builder | FIXED: controls reach existing API; real context HTTP 200 renders; missing exact-folder snapshot still requires explicit analysis |
-| Prompt Builder | FIXED: grounded artifact versus explicit manual provenance; target teammate/boundaries/constraints forwarded |
-| Conflict Radar | FIXED and PARTIALLY WORKING: honest inventory overlap, not changed-line or merge conflict detection |
-| Integration | FIXED and PARTIALLY WORKING: detected method/path matching, branch/commit/omission metadata and insufficient evidence; no payload/runtime proof |
-| Overview | FIXED: measured snapshot state/coverage/identity; demo values restricted to demo mode; no durable activity history |
-| Change Repository | VERIFIED WORKING: clears repository/team/active evidence; preserves memory GitHub token as existing behavior |
-| Reset/settings | VERIFIED WORKING: memory-only access key; reset clears connection/team/artifact state and credentials |
-| Reload/token reentry | VERIFIED WORKING with actual frontend/backend/GitHub: token cleared on reload; reentry restores authorized snapshot without rescan |
+OBSERVED: UI requests a Fine-grained PAT, selected repository, Metadata: Read and Contents: Read. It asks for no write/admin permissions. Preflight checks actual endpoint access, not a guessed permission list or credential prefix. X-Accepted-GitHub-Permissions is inspected on denied operations as endpoint requirement evidence, never reported as granted permission proof. 404 preserves the ambiguity between nonexistent and inaccessible private resources. Organization approval/policy can restrict access even for collaborators.
 
-## Backend and frontend checks
+VERIFIED: Invalid token produces 401 authentication failure, never quota or anonymous retry. Permission/header failures, missing token, not found, primary/secondary/unknown quota, timeout/network/upstream failure and empty repositories have safe typed contracts. Rate metadata includes limit/remaining/used/reset/resource; cooldown is credential-scoped, bounded and disables immediate retries. No repeated /rate_limit polling occurs. GITHUB_TOKEN remains only a Settings/redaction value or an explicitly supplied diagnostic credential, not automatic user authorization.
 
-- Backend full suite: `python -B -m pytest -q -p no:cacheprovider --basetemp=<unique temporary directory>`: **266 passed**, 11.99 seconds on final backend run. One existing Starlette/httpx deprecation warning.
-- Frontend typecheck: PASS.
-- Frontend lint: PASS, no warnings after request-epoch cleanup correction.
-- Frontend build: PASS, 2178 modules. Existing Browserslist database-age warning; no dependency migration performed.
-- Repository-state browser suite: **29 checks passed** covering lifecycle/error/quota/late-result/mobile/repository-switch states.
-- Workspace browser suite: PASS, expanded to assert New Chat draft/ID clearing, ID reuse on follow-up and conversation expiry without reinspection, alongside citations/source/artifacts/comparison/mobile.
-- Product-completion browser suite: **8 checks passed**, covering builder payloads, team add/edit/delete/reload, measured Overview, insufficient integration evidence, all nine artifact hashes/previews/downloads and settings/reset.
-- Live GitHub browser suite: **9 checks passed** on final run. Anonymous access correctly reported an exhausted quota; that run did not perform anonymous collection. Authenticated analysis/reuse/context/reload succeeded.
+OBSERVED/VERIFIED: Password inputs, cleared submitted input, memory-only credential/access key, no browser-storage/URL/query/AI/snapshot persistence. Saved repo accessible=false with no authenticated/source/quota observation. Draft credential never reaches source reads. Replacing a token revalidates this repository; changing repository clears repository-specific state and requires preflight even when the tab retains its credential. Existing authorization observations remain credential-digest scoped for 60 seconds; another credential does not inherit a grant. Explicit preflight refreshes HEAD/branches/metadata. No repository code is executed.
 
-A first live browser attempt timed out waiting for the generated context header despite HTTP 200. The test now explicitly awaits the context response, and unchanged initial-folder synchronization avoids invalidating an in-flight request. Final live rendering passed. Failures during implementation were corrected and checks rerun; they are not represented as passed runs.
+## Request accounting and collection decision
 
-## Live GitHub and request accounting
+ARCHIVE COLLECTION: IMPLEMENT, analysis-only archive/tree hybrid. No second client, analyzer, snapshot engine, cache, credential store or context system. Generic browsing/pinned source keep existing APIs.
 
-Actual React → local FastAPI → GitHub REST tests used the existing Git credential in memory only. Neither tests nor reports retain the token. The original configured local fallback remains invalid; tests cleared that fallback only inside the test server process.
+| Real authorized repository | Commit | Before: tree/content collection | Final hybrid cold HEAD | Final files |
+|---|---|---|---|---|
+| Public Alzheimer-Disease-Prediction-Model | 3a7a550985975a73805974c0e80f7c720b6dc8f0 | 1 tree + 42 files = 43 GitHub collection calls | HEAD + archive API + download redirect + tree = 4 HTTP requests | 42 |
+| Private No-Way-Home3 | c05ae393110427f7c15f0f43c8cebf6f2f67b396 | 1 tree + 100 files = 101 GitHub collection calls | HEAD + archive API + download redirect + tree = 4 HTTP requests | 100 |
 
-- Anonymous access observed remaining 4/60, then collection reached zero and correctly returned Baton 429 for GitHub 403. A failed quota-limited attempt did not become usable intelligence.
-- Request token accepted in the authenticated 5000-request bucket; invalid token returned authentication failure, not rate-limit failure.
-- Successful public ML collection retained commit `3a7a550985975a73805974c0e80f7c720b6dc8f0`, 42 analyzed files and 26 omissions. With an already observed authorized HEAD, collector metrics were **1 tree + 42 files = 43 GitHub requests**. HEAD resolution is separate and can add one request when its observation expires.
-- Immediate ordinary same-state analysis: **0 collection requests**, no tree/files. Double click issued one analysis POST.
-- Context generation and reopening chat issued no analysis POST. New Chat issued zero inspection/analysis requests in the fixture regression; first/follow-up service tests reuse retained evidence. Live provider first/follow-up request counts could not be measured because AI configuration is incomplete.
-- Nine real artifact HTTP calls returned matching hashes/identity without tree/file collection; a pinned README source read used one file request. HEAD observations may refresh after 60 seconds.
+VERIFIED: Warm HEAD saves one request. Snapshot reuse has zero collection requests; expired 60-second HEAD observation can add one authorization request. Pinned tree can also reuse a credential-scoped immutable observation. Request counters include the download redirect separately; primary GitHub API collection is archive + tree, not the codeload HTTP download. Concurrent identical analysis coalesces; duplicate inventory paths do not create duplicate file reads.
 
-No automatic retry, whole-repository scan on every message, or rate-limit error suppression was introduced.
+Measured before under tracemalloc: public 28.12 seconds / 7,555,598 peak traced Python bytes; private 133.64 seconds / 6,832,321 bytes. Bounded archive inventory before authoritative-tree reconciliation: about 33 MB public / 26 MB private peak traced bytes; 9.41 / 144.78 seconds under tracing. Final verified hybrid without tracemalloc: public 7.46 seconds, private 54.58 seconds. Traced/untraced runs are not a controlled latency comparison; do not attribute all wall-clock differences to the transport. Download-only engineering checks: public 8,313,015 compressed / 19,739,614 declared expanded bytes / 79 entries / 2.26 seconds; private 6,817,139 / 14,358,285 / 1,326 / 1.84 seconds. Canonical static processing remains significant for the private repository.
 
-## Production/deployment verification
+Safety: 20 MB streamed download; 40 MB decompressed TAR stream before any PAX/long-name parsing; 10,000 entries; existing 100 attempted text files / 200 KB per file / 2 MB selected total. In-memory reads only. Absolute/traversal/Windows/control-character paths, duplicate members, symlinks/hardlinks/devices and inconsistent commit roots are rejected. The full API ref is the HEAD SHA; public seven-character and private full-SHA root forms are checked. Authoritative tree blob hashes verify selected bytes (including LFS expansion mismatch), and its inventory/modes/SHAs feed the unchanged pipeline. Folder filters, priority, sensitive-path filtering, sanitization and omissions remain intact. Rejected archives use the bounded existing collector; auth/quota/network/API failures never trigger an alternate scan. Oversized/truncated archives cannot become apparently complete snapshots. Memory overhead is bounded but higher than tree/content collection. GITHUB_ARCHIVE_ANALYSIS=false is an explicit operational rollback to the bounded collector.
 
-Current remote Render `/api/health`: **200**. Vercel page: **200**. Production validation of `https://github.com/ghoshSG2347/No-Way-Home3` with the existing authorized request token: **200**, allowed Vercel CORS origin and credential absent from response.
+## Test matrix: request / expected / actual / status
 
-These checks apply to the deployment available during the audit, not the new commit before rollout. Public health does not prove deployed Git SHA, environment values, multi-worker behavior, new UI delivery or live Gemini availability. VITE_BATON_API_URL remains build-time public configuration; changing it requires rebuilding the frontend. Render secret configuration belongs outside Git. No dashboard secrets were changed.
+| ID / Request | Expected | Actual | Status |
+|---|---|---|---|
+| A public + valid token | Authenticated preflight/analysis | Real accepted Git credential, full SHA/blobs, 42 files; Fine-grained subtype unavailable | PARTIAL live; fixture PASS |
+| B public + no token | Block before GitHub | Route 401 + UI disabled connect; no repository calls after reload | VERIFIED |
+| C public + invalid token | 401, no downgrade | Actual GitHub 401 + browser actionable error | VERIFIED |
+| D private + selected Fine-grained token | Private branches/tree/analysis | Real authorized private credential, 100 files, archive/blob proof; not Fine-grained | PARTIAL live; fixture PASS |
+| E private + unselected repo | Access denial/not found | /user success followed by safe 404/403 stops preflight | Fixture PASS; live UNKNOWN |
+| F missing Contents read | Clear permission failure | Branch endpoint 403 + accepted permissions maps insufficient permissions | Fixture PASS; live UNKNOWN |
+| G missing Metadata read | Clear endpoint requirement failure | Metadata endpoint 403 + accepted permissions maps insufficient permissions; no grant inference | Fixture PASS; live UNKNOWN |
+| H expired | Authentication failure | 401 fixture stops at /user, no retry | Fixture PASS; live UNKNOWN |
+| I revoked | Authentication failure | Same safe 401 lifecycle fixture | Fixture PASS; live UNKNOWN |
+| J primary rate limit | Safe quota/reset + blocked retry | Wire classification + credential cooldown + browser disabled actions | Fixture PASS |
+| K secondary rate limit | Backoff, no aggressive retry | Wire/browser cooldown expiration, zero auto-analysis | Fixture PASS |
+| L repository switching | Old evidence gone; new preflight | Browser clears identity/team/active intelligence; memory credential retained only | PASS |
+| M branch switching | Correct current/stale identity | Browser late-result/branch isolation and service commit-pinning | PASS |
+| N snapshot reuse | No tree/file/archive collection | Actual warm public reuse 0 collection; private expired HEAD adds authorization read only | VERIFIED |
+| O New Chat | No collection; clear draft/session | Workspace fixture assertions: 0 analysis and 0 inspection at click | Fixture PASS |
+| P follow-up chat | Reuse snapshot/conversation | Service/browser fixture uses ID and revision; no analysis | Fixture PASS; live Gemini UNKNOWN |
+| Q Context Builder | Existing snapshot only | Live HTTP 200 + browser render, no analysis POST | VERIFIED |
+| R Prompt Builder | Snapshot artifact, task required | Browser canonical/manual provenance; actual prompt HTTP 200 with task | PASS |
+| S Source | Same credential and pinned commit | Live README source HTTP 200, same commit; path guards tested | VERIFIED |
+| T Conflict Radar | Same credential; honest overlap/errors | Browser failed branch read preserved; per-branch dedup fixtures | Fixture PASS |
+| U Integration | Same credential; bounded canonical analysis | Service/route token headers; browser insufficient evidence presentation | Fixture PASS |
+| V artifacts | Snapshot reuse + hashes | All nine actual HTTP 200 with valid inputs, matching hashes; browser previews/downloads | VERIFIED |
 
-## AI/Gemini verification and limitation
+## Executed checks and limits
 
-Local safe presence check: GEMINI_API_KEY present; GEMINI_MODEL absent; BATON_ACCESS_KEY absent. Live inspection reported provider configured=false. No billable Gemini request was attempted with guessed configuration. The existing server-only REST provider, bounded lexical retrieval, ownership/evidence/action validation and process-local conversation store remain intact.
+- Backend: 305 passed, 11.45 seconds in final full run; one existing Starlette/httpx deprecation warning.
+- Frontend typecheck/lint/build: PASS; no lint warnings. Existing Browserslist age warning remains.
+- Workspace browser suite: PASS, grounded fixture chat/citations/source/compare, New Chat/follow-up/expired sessions, token isolation/mobile/refresh.
+- Repository states browser: 29 passed, including quota cooldown/error classification/late results/branch and repository switching.
+- Product completion browser: 8 passed, builders, team edit/delete/reload, measured Overview, integration unknown, nine artifact previews/downloads, settings/reset.
+- Live GitHub browser: 9 passed, actual React → local FastAPI → GitHub; no-token blocking, invalid token, accepted bucket, double-click one analysis, reuse, context, secrecy and refresh/reentry without rescan.
+- Actual public/private GitHub service runs: both preflights, exact commit-pinned analysis, 5000-request authenticated core bucket, archive downloads/hybrid blob verification and reuse verified.
+- Local live artifact/source HTTP checks: nine artifact kinds and pinned README pass; missing-task prompt correctly returned 422 before valid-task retry.
+- No real Fine-grained PAT was safely available. The existing Git credential was never written/logged/returned and was identified only as not Fine-grained. No live missing-scope/expired/revoked token was created or guessed.
+- Live Gemini stops at inspection: configured=false. First/follow-up response quality, quota and production chat remain UNKNOWN; fixture success is not provider certification.
 
-Backend/service/browser fixtures verify first message, follow-up ID/revision, scope isolation, citation/source identity, exports and safe failure states. This does **not** verify relevance/quality/latency/quota of real Gemini output or production New Chat. The operator must configure GEMINI_MODEL and BATON_ACCESS_KEY alongside a valid server-side GEMINI_API_KEY, then repeat live chat/quality acceptance tests.
+Earlier implementation failures were corrected: Windows pytest temporary directory permissions required a unique explicit basetemp; old tests expected anonymous fallback; a private archive used full-SHA rather than public short-SHA roots; a refresh browser assertion still expected the old anonymous inspection; one live run was invalidated by frontend hot reload and rerun cleanly. Final results above are successful executed runs, not claims that these earlier failures passed.
 
-## Security re-audit
+## Deployment and configuration verification
 
-No credential logging or persistence was introduced. GitHub/Google hosts remain fixed; repository source is statically parsed, not executed. Generic file display and workspace source guards reject traversal and credential files, including environment templates. Analysis can still collect allowed environment templates through the existing service policy and sanitize every assignment value; regression tests protect this distinction. owner/repository grammar is reused rather than adding an HTTP integration. Provider errors never echo upstream bodies. Frontend errors redact known/signature credentials. Snapshot/context sanitization and the safe JSON response boundary remain active. Artifacts verify content hashes before download. Raw HTML, remote images and active links remain suppressed in AI Markdown.
+VERIFIED before delivery: Vercel HTML 200 and Render /api/health 200. Old production no-token repository validation returned 429/github_rate_limit/token_source=none. Existing accepted request credential privately validated No-Way-Home3 with HTTP 200, correct canonical Vercel Origin/CORS and no secret echo, but old response lacked authenticated/token_source fields. Therefore pre-delivery deployment was old; a Git push is not rollout proof.
 
-Repository instructions remain untrusted data under the existing provider system policy. Returned actions are guidance and must cite supplied editable evidence; no repository writes execute. Prompt injection resistance and redaction are not a mathematical guarantee. Ordinary APIs remain unauthenticated when BATON_ACCESS_KEY is unset; CORS is not authentication. Unknown secret formats, global inbound request-size limits, shared-key tenancy, process-local state and the 60-second permission/HEAD window remain limitations.
+OBSERVED: Existing Render start/build configuration, Vercel rewrite, operator-key/provider/CORS/build-time API variables remain. Normal repository authorization uses the request credential, never server GITHUB_TOKEN. .env.example now distinguishes diagnostics and exposes bounded archive controls. Provider secrets remain backend-only; no tracked actual environment values. Backend /api/version and frontend baton-revision markers permit post-push SHA comparison; missing/null/mismatched values mean unverified/stale, not success. Final delivery report records post-push checks; dashboard/root/build settings remain unavailable.
 
-**VERIFIED:** Actual configured secrets and the existing Git credential were absent from staged content and every tracked file. No credential signature appeared in the staged diff; staged whitespace review passed. Environment files, keys, dependencies, build outputs, screenshots and generated fixtures remain ignored and unstaged.
+## Remaining limitations
 
-## Remaining limitations and technical debt
+Real least-permission Fine-grained/public/private/collaborator/selection/lifecycle matrix and live Gemini remain unverified. GitHub itself can restrict organization/resource-owner/collaborator token access. Token subtype is not inferred as a security claim. Snapshots/conversations/observations remain process-local; restart/eviction/worker separation can lose state. Existing authorization observations have a 60-second lifetime. Branch listing remains first 100; content/archive limits produce real omissions. Static aliases/wrappers and payload compatibility are incomplete; Conflict Radar inventory is not merge-hunk detection. Private canonical processing is still comparatively slow. Archives add bounded memory overhead and can require fallback for symlinks/LFS expansion/large/truncated trees. Broader request-size/runtime pinning/CI/tenancy debt remains outside this task.
 
-Static extraction still has shallow wrapper/alias/dynamic API handling. The prior full static Baton self-analysis included test/detector strings and produced false project-family/routes; runtime/source cross-checks remain necessary. No new scanner or semantic engine was built. Integration cannot prove payload/auth/runtime compatibility; Conflict Radar cannot prove changed hunks/merge conflicts. Branch pagination remains first 100; collection omissions are real. Snapshot/conversation/cache state remains bounded and process-local, without durability or worker sharing. No accounts, server team persistence, live provider certification or production-revision endpoint exists.
+## Security and documentation consistency
 
-Existing 51 tracked Python bytecode files, two TS build-info files, unused Supabase/legacy schema, unpinned Python/runtime dependencies, no tracked CI/Docker workflow and broader inbound schema bounds remain separate debt. No unrelated cleanup was performed.
+VERIFIED/OBSERVED: No repository execution/import; no PAT forwarding to codeload; no token/account profile/upstream-body response; sanitized canonical file/context/evidence/provider boundaries unchanged. Transport query grants redacted at INFO and debug diagnostics use categories/counts/allowlisted quota only. Executed scan of every tracked file and the implementation diff found zero existing Git credential or configured-secret matches. Staged whitespace and secret review are repeated before commit. Credentials are excluded from browser storage and AI payloads; synthetic test credentials are inert strings, not real secrets. No environment file, generated dump/build, bytecode or credentials are staged.
 
-## Documentation and delivery rule
+PROJECT_CONTEXT.md was revised in place for current product/token/preflight/security/cache/archive/snapshot/refresh/test/deployment/provider behavior and reread against source/tests/runtime configuration. Obsolete optional-token/server-fallback statements were removed from the canonical current reference. GITHUB_TOKEN_GUIDE.md records the user-facing read-only minimum and official links. Historical V1/audit documents are explicitly historical, not current contracts.
 
-PROJECT_CONTEXT.md was revised in place to remove obsolete disconnected-control/placeholder claims and document current request/identity/error/security behavior. This audit records executed evidence and limits. Root AGENTS.md enforces the user-requested rule: each future engineering task must read both documents and update them before final commit, preserving truthful local/live distinctions.
+## Exact intended files changed
 
-Implementation delivered in commit `ed870ea8a5b294f332cfb20b476a7bb46a2b1198` (`fix: connect Baton product workflows to canonical snapshots`), pushed normally to origin/main. Local HEAD and remote refs/heads/main matched, with a clean working tree after delivery. Deployment rollout is independently verifiable and is not inferred from Git push.
-
-**Documentation refresh, 2026-10-07:** Starting tree clean at the delivered implementation commit; remote SHA equality rechecked. PROJECT_CONTEXT.md was reconciled with GitHub service/route validation, environment-template analysis versus display protection, canonical/manual prompt flows, team editing, recorded verification counts and the root engineering rule. Obsolete recommendations were removed in place. This pass changes documentation only; prior test/live results are retained as dated evidence, not claimed as rerun. Markdown sections, whitespace and changes are checked before the documentation commit.
+- `PROJECT_AUDIT.md`
+- `.gitignore`
+- `GITHUB_TOKEN_GUIDE.md`
+- `PROJECT_CONTEXT.md`
+- `baton-backend-v1/.env.example`
+- `baton-backend-v1/app/api/deps.py`
+- `baton-backend-v1/app/api/routes/github.py`
+- `baton-backend-v1/app/api/routes/health.py`
+- `baton-backend-v1/app/core/config.py`
+- `baton-backend-v1/app/services/analysis_service.py`
+- `baton-backend-v1/app/services/github_service.py`
+- `baton-backend-v1/tests/conftest.py`
+- `baton-backend-v1/tests/test_ai_workspace.py`
+- `baton-backend-v1/tests/test_context_system.py`
+- `baton-backend-v1/tests/test_github.py`
+- `baton-backend-v1/tests/test_github_archive.py`
+- `baton-backend-v1/tests/test_github_rate_limits.py`
+- `baton-backend-v1/tests/test_health.py`
+- `baton-backend-v1/tests/test_integration.py`
+- `baton-backend-v1/tests/test_intelligence_service.py`
+- `baton-backend-v1/tests/test_product_completion.py`
+- `baton-backend-v1/tests/test_repository_states.py`
+- `baton-frontend/src/App.tsx`
+- `baton-frontend/src/components/workspace/WorkspaceShell.tsx`
+- `baton-frontend/src/components/workspace/sections/AIWorkspace.tsx`
+- `baton-frontend/src/components/workspace/sections/Repository.tsx`
+- `baton-frontend/src/hooks/useWorkspaceState.ts`
+- `baton-frontend/src/lib/api/batonApi.ts`
+- `baton-frontend/src/lib/workspaceStatus.ts`
+- `baton-frontend/src/types/index.ts`
+- `baton-frontend/tests/github-live.e2e.cjs`
+- `baton-frontend/tests/product-completion.e2e.cjs`
+- `baton-frontend/tests/repository-states.e2e.cjs`
+- `baton-frontend/tests/workspace.e2e.cjs`
+- `baton-frontend/vite.config.ts`

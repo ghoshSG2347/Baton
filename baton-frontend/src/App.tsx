@@ -41,7 +41,7 @@ export default function App() {
       case 'overview':
         return <Overview state={state} onConnectRepo={handleConnectRepo} />;
       case 'repository':
-        return <Repository state={state} />;
+        return null;
       case 'team':
         return <Team state={state} />;
       case 'analysis':
@@ -83,8 +83,11 @@ export default function App() {
             transition={{ duration: 0.3 }}
           >
             <WorkspaceShell key={state.resetVersion} state={state} onBackToLanding={() => setPage('landing')}>
+              {(state.activeSection === 'repository' || (state.repo && !state.isDemoMode && !state.githubToken)) && <Repository state={state} />}
+              {(!state.repo || state.isDemoMode || state.githubToken) && <>
               <div className="h-full" hidden={state.activeSection !== 'ai'}><Suspense fallback={<div role="status" className="h-full grid place-items-center text-baton-text-tertiary text-sm">Loading workspace…</div>}><AIWorkspace key={`${state.repo?.owner}/${state.repo?.repository}`} state={state} /></Suspense></div>
               {renderSection(state.activeSection)}
+              </>}
             </WorkspaceShell>
           </motion.div>
         )}

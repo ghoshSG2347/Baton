@@ -293,7 +293,7 @@ async def test_authorization_failure_prevents_snapshot_reuse(http_status):
 def test_context_route_exposes_new_views_and_legacy_keys(monkeypatch):
     intel = analyze(FIXTURES['bookos'])
     monkeypatch.setattr(ContextSnapshotService, 'load', AsyncMock(return_value=intel))
-    client = TestClient(app)
+    client = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'})
     request = {'owner': 'example', 'repo': 'project', 'branch': 'main', 'context_type': 'ai_handoff', 'member': {'role': 'Frontend Developer', 'ownership': ['client/']}, 'task': 'Inspect askBook'}
     result = client.post('/api/v1/context', json=request)
     assert result.status_code == 200
@@ -307,7 +307,7 @@ def test_context_route_exposes_new_views_and_legacy_keys(monkeypatch):
 
 
 def test_route_small_budget_and_refresh_errors_are_actionable(monkeypatch):
-    client = TestClient(app)
+    client = TestClient(app, headers={'X-GitHub-Token': 'fixture-credential'})
     request = {'owner': 'example', 'repo': 'project', 'branch': 'main', 'max_bytes': 1024}
     monkeypatch.setattr(ContextSnapshotService, 'load', AsyncMock(return_value=analyze(FIXTURES['frontend'])))
     assert client.post('/api/v1/context', json=request).status_code == 413

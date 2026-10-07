@@ -11,7 +11,6 @@ from app.utils.file_filters import is_relevant
 from app.intelligence import pipeline, snapshot
 from app.intelligence.models import SnapshotStatus
 from app.intelligence.safety import sensitive_path, sanitize_file, sanitize_model
-from app.analyzers.documentation_analyzer import _classify_doc_path
 
 class AnalysisService:
     _inflight = {}
@@ -39,10 +38,10 @@ class AnalysisService:
         def finished(done):
             self._inflight.pop(key, None)
             self.github._content.clear()
-            logging.getLogger('uvicorn.error.baton.analysis.metrics').info(
-                'analysis_requests token_present=%s token_source=%s counts=%s total=%s last_response=%s failed=%s',
+            logging.getLogger('uvicorn.error.baton.analysis.metrics').debug(
+                'analysis_requests token_present=%s token_source=%s counts=%s total=%s cache_hits=%s last_response=%s failed=%s',
                 bool(self.github.token), self.github.token_source, dict(self.github.request_counts),
-                sum(self.github.request_counts.values()), self.github.last_response,
+                sum(self.github.request_counts.values()), dict(self.github.cache_counts), self.github.last_response,
                 done.cancelled() or done.exception() is not None)
         task.add_done_callback(finished)
         return deepcopy(await asyncio.shield(task))
@@ -52,6 +51,7 @@ class AnalysisService:
         self._collected = False
         self.github._content.clear()  # file reuse is confined to this collection
         self.github.request_counts.clear()
+        self.github.cache_counts.clear()
         if not branch:
             repository = await self.github.repository(owner, repo)
             branch = repository.get('default_branch') or 'HEAD'
@@ -77,21 +77,36 @@ class AnalysisService:
             cached.project_root.strip('/'), cached.analysis_version) == (
             owner.lower(), repo.lower(), branch, commit, folder, '1.1')
         if cache_matches and cached.snapshot_status in {SnapshotStatus.CURRENT, SnapshotStatus.PARTIAL} and not force_refresh:
+            self.github.cache_counts['snapshot'] += 1
             return sanitize_model(cached, secret_values(self.github.token))
         stale = any(x['owner'].lower() == owner.lower() and x['repo'].lower() == repo.lower() and x['branch'] == branch and x['folder'] == folder and x['commit'] != commit for x in self.store.metadata())
         self._collected = True
-        tree = await self.github.tree_snapshot(owner, repo, commit)
+        archive_contents, archive_omissions = None, {}
+        archive_warning = None
+        tree = None
+        if settings.github_archive_analysis:
+            try:
+                _, archive_contents, archive_omissions = await self.github.archive(owner, repo, commit, folder)
+                # Retain Git's authoritative blob/mode/tree evidence. Verify every
+                # selected archive byte against the exact commit's Git blob SHA,
+                # including repositories configured to expand LFS in archives.
+                tree = await self.github.tree_snapshot(owner, repo, commit)
+                expected = {item['path']: item.get('sha') for item in tree.get('tree', []) if item.get('type') == 'blob'}
+                if tree.get('truncated') or any(expected.get(path) != data['sha'] for path, data in archive_contents.items()):
+                    raise BatonError('Archive content does not match verified Git blob evidence.', 409, 'archive_collection_unavailable')
+            except BatonError as exc:
+                if exc.code != 'archive_collection_unavailable':
+                    raise  # Auth/quota/transport failures must never trigger a second collection.
+                archive_contents = None
+                archive_warning = 'Archive unavailable within safety bounds; used bounded tree/content collection.'
+        if tree is None:
+            tree = await self.github.tree_snapshot(owner, repo, commit)
         items = [x for x in tree.get('tree', []) if not folder or x.get('path') == folder or x.get('path', '').startswith(folder + '/')]
         contents, omissions = {}, {}
         total_bytes, attempts = 0, 0
         # Discover intent first, followed by manifests/config, then remaining code.
-        def priority(x):
-            path = x.get('path', '')
-            if _classify_doc_path(path): return (0, path)
-            if path.endswith(('package.json', '.toml', 'requirements.txt', '.env.example')): return (1, path)
-            return (2, path)
         seen = set()
-        for item in sorted(items, key=priority):
+        for item in sorted(items, key=GitHubService.collection_priority):
             if item.get('type') != 'blob':
                 continue
             path = item['path']
@@ -109,7 +124,13 @@ class AnalysisService:
                 continue
             attempts += 1
             try:
-                data = await self.github.file(owner, repo, commit, path)
+                if archive_contents is not None:
+                    if path not in archive_contents:
+                        omissions[path] = archive_omissions.get(path, 'unreadable_file')
+                        continue
+                    data = archive_contents.pop(path)
+                else:
+                    data = await self.github.file(owner, repo, commit, path)
                 text = data['content']
                 size = len(text.encode('utf-8'))
                 if size > settings.max_file_size_bytes:
@@ -124,6 +145,7 @@ class AnalysisService:
                     raise  # never cache an authorization/rate-limit failure
                 omissions[path] = 'unreadable_file'
         warnings = []
+        if archive_warning: warnings.append(archive_warning)
         if stale: warnings.append('Repository has changed since the previous analysis snapshot.')
         if tree.get('truncated'): warnings.append('GitHub returned a truncated tree; inventory is incomplete.')
         metadata = dict(owner=owner, repo=repo, branch=branch, folder=folder, commit=commit,
