@@ -2,6 +2,7 @@
 import json
 from app.core.secrets import secret_values
 from app.generators.context_builder import scrub
+from app.core.security import REQUEST_AI, AICredential
 
 
 class SafeJSONResponses:
@@ -12,12 +13,15 @@ class SafeJSONResponses:
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
         start, chunks, size = None, [], 0
+        completed = False
         headers = dict(scope.get('headers', []))
         secrets = secret_values(*(headers.get(name, b'').decode('utf-8', 'ignore')
-                                  for name in (b'x-github-token', b'x-baton-key')))
+                                  for name in (b'x-github-token', b'x-baton-key', b'x-gemini-key')))
+        handle = REQUEST_AI.set(AICredential(headers.get(b'x-gemini-key', b'').decode('ascii', 'ignore').strip(),
+                                            headers.get(b'x-gemini-model', b'').decode('ascii', 'ignore').strip()))
 
         async def safe_send(message):
-            nonlocal start, size
+            nonlocal start, size, completed
             if message['type'] == 'http.response.start':
                 start = message
             elif message['type'] == 'http.response.body':
@@ -42,7 +46,25 @@ class SafeJSONResponses:
                 start['headers'].append((b'content-length', str(len(body)).encode()))
                 await send(start)
                 await send({'type': 'http.response.body', 'body': body})
+                completed = True
             else:
                 await send(message)
 
-        await self.app(scope, receive, safe_send)
+        try:
+            await self.app(scope, receive, safe_send)
+        except Exception as exc:
+            # Keep unexpected application failures safe and visible to CORS clients.
+            # Never log exception text: it may contain upstream credentials/content.
+            import logging
+            from app.core.config import get_settings
+            logging.getLogger('uvicorn.error').error('Baton application failure type=%s', type(exc).__name__)
+            if not completed:
+                body = b'{"detail":"Baton encountered a server error. Try again later.","code":"baton_backend_failure"}'
+                response_headers = [(b'content-type', b'application/json'), (b'content-length', str(len(body)).encode())]
+                origin = headers.get(b'origin', b'').decode('ascii', 'ignore')
+                if origin in get_settings().cors_origins:
+                    response_headers.extend([(b'access-control-allow-origin', origin.encode()), (b'vary', b'Origin'), (b'access-control-expose-headers', b'X-Baton-Usage')])
+                await send({'type': 'http.response.start', 'status': 500, 'headers': response_headers})
+                await send({'type': 'http.response.body', 'body': body})
+        finally:
+            REQUEST_AI.reset(handle)

@@ -14,6 +14,14 @@ type ValidateState = 'idle' | 'loading' | 'success' | 'error';
 export function Repository({ state }: { state: WorkspaceStateHook }) {
   const [urlInput, setUrlInput] = useState(state.repoUrl || '');
   const [tokenInput, setTokenInput] = useState('');
+  const [geminiInput, setGeminiInput] = useState('');
+  const [modelInput, setModelInput] = useState(state.geminiModel);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [checks, setChecks] = useState<string[]>([]);
+  const validationLock = useRef(false);
+  const aiEpoch = useRef(0);
+  const aiLock = useRef(false);
+  useEffect(() => () => { aiEpoch.current++; }, []);
   const [access, setAccess] = useState<GitHubAccess | null>(null);
   const [accessBusy, setAccessBusy] = useState(false);
   const [validateState, setValidateState] = useState<ValidateState>('idle');
@@ -67,8 +75,10 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
   }, [state.fileReference, state.githubToken]);
 
   const handleValidate = async () => {
-    if (!urlInput.trim() || (!state.isDemoMode && !(tokenInput.trim() || state.githubToken)) || validateState === 'loading' || (retryBlocked && sameAccess)) return;
+    if (!urlInput.trim() || (!state.isDemoMode && !(tokenInput.trim() || state.githubToken)) || validateState === 'loading' || validationLock.current || (retryBlocked && sameAccess)) return;
+    validationLock.current = true;
     const current = ++validationEpoch.current;
+    setChecks([]);
     const effectiveToken = tokenInput.trim() || state.githubToken;
     lastAccessToken.current = effectiveToken;
     setValidateState('loading');
@@ -87,7 +97,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
         state.setRepoUrl(urlInput);
         state.setRepo(demoRepo);
         setValidateState('success');
-        setBranches(DEMO_BRANCHES);
+        setBranches(DEMO_BRANCHES); validationLock.current = false;
       }, 1200);
       return;
     }
@@ -95,6 +105,13 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
     try {
       const result = await batonApi.validateRepository(urlInput, effectiveToken || undefined);
       if (current !== validationEpoch.current) return;
+      setChecks(['Repository URL valid', 'GitHub token accepted', 'Repository access verified', 'Required read endpoints available']);
+      if (geminiInput.trim()) {
+        await batonApi.validateGemini(geminiInput.trim(), modelInput.trim());
+        if (current !== validationEpoch.current) return;
+        state.setGeminiCredential(geminiInput.trim(), modelInput.trim(), true); setGeminiInput('');
+        setChecks(previous => [...previous, 'Gemini key accepted', 'Gemini model reports generation support']);
+      }
       state.setRepoUrl(urlInput);
       state.setRepo(result);
       state.setGithubToken(effectiveToken);
@@ -107,7 +124,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       if (current !== validationEpoch.current) return;
       setValidateState('error');
       setError(err instanceof Error ? err : new Error('Failed to validate repository'));
-    }
+    } finally { validationLock.current = false; }
   };
 
   const handleBranchSelect = (branchName: string) => {
@@ -179,6 +196,34 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
     return sorted;
   };
 
+  const validateAI = async () => {
+    if (aiBusy || aiLock.current || retryBlocked || !geminiInput.trim() || !modelInput.trim()) return;
+    aiLock.current = true;
+    const current = ++aiEpoch.current;
+    setAiBusy(true); setError(null);
+    // Replacing a credential immediately disables the old AI scope.
+    state.setGeminiCredential('', modelInput.trim());
+    try {
+      await batonApi.validateGemini(geminiInput.trim(), modelInput.trim());
+      if (current !== aiEpoch.current) return;
+      state.setGeminiCredential(geminiInput.trim(), modelInput.trim(), true); setGeminiInput('');
+      setChecks(previous => [...previous.filter(check => !check.startsWith('Gemini')), 'Gemini key accepted', 'Gemini model reports generation support']);
+    } catch (err) { if (current === aiEpoch.current) setError(err instanceof Error ? err : new Error('Gemini validation failed')); }
+    finally { aiLock.current = false; if (current === aiEpoch.current) setAiBusy(false); }
+  };
+  const aiFields = <div className="space-y-3" aria-label="Gemini credentials">
+    <label className="block text-xs text-baton-text-secondary">Gemini API key
+      <input aria-label="Gemini API key" type="password" autoComplete="off" maxLength={512} value={geminiInput} onChange={event => setGeminiInput(event.target.value)} placeholder={state.geminiReady ? 'Validated key held in this tab' : 'Enter your own Gemini key'} className="mt-2 w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2.5 text-sm text-baton-white" />
+    </label>
+    <label className="block text-xs text-baton-text-secondary">Gemini model
+      <input aria-label="Gemini model" maxLength={100} value={modelInput} onChange={event => setModelInput(event.target.value)} placeholder="Model identifier available to your key" className="mt-2 w-full border border-baton-border bg-baton-black rounded-baton px-3 py-2.5 text-sm text-baton-white" />
+    </label>
+    <p className="text-xs text-baton-text-tertiary">Keys stay in this tab's memory and are used by Baton’s backend. Reload requires re-entry. Model validation checks provider metadata; generation and quota are confirmed when you ask. Repository context and exports remain available without AI.</p>
+    <a className="text-xs text-baton-accent underline" href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer">Get a Gemini API key</a>
+    {state.repo && <div className="flex flex-wrap gap-2"><Button onClick={validateAI} disabled={aiBusy || retryBlocked || !geminiInput.trim() || !modelInput.trim()}>{aiBusy ? 'Validating Gemini…' : 'Validate Gemini'}</Button><Button variant="ghost" onClick={() => { aiEpoch.current++; setAiBusy(false); state.setGeminiCredential('', modelInput.trim()); setGeminiInput(''); setChecks(previous => previous.filter(check => !check.startsWith('Gemini'))); }}>Clear Gemini key</Button></div>}
+    <p role="status" className="text-xs text-baton-text-secondary">{aiBusy ? 'AI validating' : state.geminiReady ? `AI ready · ${state.geminiModel}` : 'AI key required or not validated'}</p>
+  </div>;
+
   const getDepth = (path: string) => path.split('/').length - 1;
   const isExpanded = (path: string) => expandedDirs.has(path) || path.endsWith('/');
   const visibleItems = buildTree(tree).filter((item) => {
@@ -194,6 +239,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
       <p className="text-sm text-baton-text-tertiary mb-8">Connect and inspect the GitHub repository.</p>
       {error && <div className="mb-4"><ErrorStatus error={error} operation="connection" primaryAction={!state.repo && <Button onClick={handleValidate} disabled={validateState === 'loading'}>Retry connection</Button>} /></div>}
 
+      {checks.length > 0 && <ul aria-label="Connection checks" className="mb-5 text-xs text-baton-text-secondary space-y-2">{checks.map(check => <li key={check}>✓ {check}</li>)}</ul>}
       {/* Connect form */}
       {!state.repo && validateState !== 'success' && (
         <Panel label="CONNECT REPOSITORY" className="mb-6">
@@ -205,7 +251,8 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
               <div className="flex items-center gap-2 border border-baton-border bg-baton-black rounded-baton px-3 py-2.5">
                 <Github size={15} className="text-baton-text-tertiary flex-shrink-0" />
                 <input
-                  type="text"
+                  type="url"
+                  aria-label="GitHub repository URL"
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
                   placeholder="https://github.com/owner/repository"
@@ -229,6 +276,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
             </div>
             <p className="text-xs text-baton-text-secondary">Baton uses your token for authenticated repository access and higher API limits. Required permissions: Metadata — Read; Contents — Read. Select the repository you want Baton to analyze. Organization approval may also be required.</p>
             <a className="text-xs text-baton-accent underline" href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer">How to create a Fine-grained token</a>
+            {aiFields}
             <div className="flex items-center gap-3">
               <Button variant="primary" onClick={handleValidate} disabled={validateState === 'loading' || !urlInput.trim() || (!state.isDemoMode && !(tokenInput.trim() || state.githubToken)) || (retryBlocked && sameAccess)}>
                 {validateState === 'loading' ? (
@@ -237,7 +285,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
                     VALIDATING...
                   </>
                 ) : (
-                  'CONNECT REPOSITORY'
+                  geminiInput.trim() ? 'VALIDATE & CONNECT' : 'CONNECT REPOSITORY'
                 )}
               </Button>
             </div>
@@ -264,6 +312,7 @@ export function Repository({ state }: { state: WorkspaceStateHook }) {
               {access && <p role="status" className="text-xs text-baton-text-secondary">{access.authenticated ? 'GitHub accepted the token.' : 'GitHub token required.'} Token source: {access.token_source}. Requests remaining: {access.rate_limit.remaining ?? 'unavailable'} / {access.rate_limit.limit ?? 'unavailable'}.{access.rate_limit.reset_at ? ` Reset: ${new Date(access.rate_limit.reset_at * 1000).toLocaleString()}.` : ''}</p>}
             </div>
           </Panel>
+          <Panel label="GEMINI ACCESS" className="mb-6"><div className="p-4">{aiFields}</div></Panel>
           <p className="text-xs text-baton-text-secondary mb-4">{state.repo.current_head ? `${state.githubToken ? 'Current commit' : 'Last observed commit'}: ${state.repo.current_head}` : 'Commit unavailable'}</p>
           {!state.githubToken && !state.isDemoMode && <p role="status" className="mb-4 text-sm text-baton-warning">GitHub token required. Re-enter your token to restore access to this remembered repository.</p>}
           {/* Change repository action */}

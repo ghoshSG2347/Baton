@@ -27,6 +27,12 @@ METRICS = logging.getLogger('baton.workspace.metrics')
 
 
 def provider_state():
+    from app.core.security import REQUEST_AI
+    credential = REQUEST_AI.get()
+    if credential and credential.key:
+        return {'name': 'gemini', 'configured': bool(credential.model), 'model': credential.model or None,
+                'missing_configuration': [] if credential.model else ['GEMINI_MODEL'],
+                'credential_source': 'request', 'model_validation': 'UNVERIFIED'}
     settings = get_settings()
     missing = [name for name, present in [('GEMINI_API_KEY', bool(settings.gemini_api_key.get_secret_value())),
                ('GEMINI_MODEL', bool(settings.gemini_model)), ('BATON_ACCESS_KEY', bool(settings.baton_access_key))] if not present]
@@ -123,6 +129,10 @@ class WorkspaceService:
         binding_data = {'identity': context['identity'], 'member': context['member'],
                         'task': context['task'], 'requested_context_type': req.context_type,
                         'constraints': req.constraints, 'credential': token}
+        from app.core.security import provider_credential
+        credential = provider_credential()
+        binding_data['ai_credential'] = credential.key
+        binding_data['ai_model'] = credential.model
         # Generated time changes each call; commit/context parameters bind scope.
         binding_data['identity'] = {k: v for k, v in binding_data['identity'].items() if k != 'generated_at'}
         binding = hmac.new(_BINDING_KEY, json.dumps(binding_data, sort_keys=True).encode(), 'sha256').hexdigest()

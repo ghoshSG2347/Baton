@@ -18,6 +18,9 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
 
   const status = error instanceof BatonApiError ? error.status : -1;
 
+  if (['ai_key_required', 'ai_key_invalid', 'ai_model_required', 'ai_model_unavailable'].includes(code)) return { state: 'REQUEST_FAILED', severity: 'error', title: ({ai_key_required: 'Gemini API key required', ai_key_invalid: 'Gemini API key rejected', ai_model_required: 'Choose a Gemini model', ai_model_unavailable: 'Configured Gemini model unavailable'} as Record<string, string>)[code], explanation: error instanceof Error ? error.message : 'Validate your Gemini key and model in Repository.' };
+  if (code === 'baton_api_configuration') return { state: 'NETWORK_ERROR', severity: 'error', title: 'Baton service address needs attention', explanation: 'The deployed backend address is invalid. Ask the deployment operator to check the service configuration.' };
+
   if (code.startsWith('conversation_')) return { state: 'REQUEST_FAILED', severity: 'warning', title: 'Chat session needs attention', explanation: error instanceof Error ? error.message : 'Start a new chat and retry your question.' };
 
   if (code === 'sensitive_source_path') return { state: 'PERMISSION_DENIED', severity: 'info', title: 'Credential file cannot be displayed', explanation: 'Choose a source file that does not contain credentials.' };
@@ -54,7 +57,9 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
 
   if (code === 'snapshot_invalid') return repositoryMessage('SNAPSHOT_INVALID');
 
-  if (code === 'github_network_failure' || code === 'network_failure' || status === 0) return { state: 'NETWORK_ERROR', severity: 'error', title: 'Could not reach the repository service', explanation: 'Check your connection and retry. The backend or GitHub may be temporarily unavailable.' };
+  if (code === 'github_network_failure') return { state: 'NETWORK_ERROR', severity: 'error', title: 'GitHub is temporarily unreachable', explanation: 'Baton responded, but could not reach GitHub. Try again when GitHub is available.' };
+  if (code === 'network_failure' || code === 'baton_backend_unreachable' || status === 0) return { state: 'NETWORK_ERROR', severity: 'error', title: "Can't reach Baton right now", explanation: 'Check the connection and try again. Previously remembered repository details do not confirm current access.' };
+  if (status >= 500) return { state: 'REQUEST_FAILED', severity: 'error', title: 'Baton encountered a server error', explanation: 'The backend responded but could not complete this operation. Try again later.' };
 
   if (code === 'ai_configuration_incomplete') return repositoryMessage('CONFIGURATION_INCOMPLETE');
 
@@ -87,7 +92,7 @@ export function repositoryMessage(state: RepositoryState): StatusMessage {
 
     EMPTY_REPOSITORY: ['info', 'No repository files to analyze', 'Add a commit with project files, then analyze this branch.'],
 
-    CONFIGURATION_INCOMPLETE: ['info', 'AI chat is not configured', 'Server configuration is needed for AI chat. Repository context, artifacts and branch comparison remain available.'],
+    CONFIGURATION_INCOMPLETE: ['info', 'AI chat is not configured', 'Enter and validate your Gemini key and model in Repository. Context, artifacts and branch comparison remain available.'],
 
   };
 

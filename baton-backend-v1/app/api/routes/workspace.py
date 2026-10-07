@@ -6,6 +6,11 @@ from app.services.workspace_service import WorkspaceService
 
 router = APIRouter(prefix='/api/v1/workspace', dependencies=[Depends(require_access_key)])
 
+@router.post('/provider/validate', dependencies=[Depends(require_ai_access)])
+async def validate_provider():
+    from app.services.ai_provider import GeminiProvider
+    return await GeminiProvider().validate()
+
 
 @router.post('/inspect')
 async def inspect(req: WorkspaceRequest, token=Depends(github_token)):

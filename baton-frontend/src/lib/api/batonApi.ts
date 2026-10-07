@@ -13,9 +13,10 @@ import type { WorkspaceRequest, WorkspaceInspection, ChatAnswer, WorkspaceArtifa
 import { redactUserText } from '@/lib/utils/redaction';
 import { currentConversationKey, recordUsage } from '@/lib/usage';
 
-const RAW_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
+const RAW_URL = import.meta.env.VITE_BATON_API_URL || (import.meta.env.PROD ? 'https://baton-shl3.onrender.com' : 'http://localhost:8000');
 const BASE_URL = RAW_URL.replace(/\/+$/, '');
-let batonAccessKey = '';
+let batonAccessKey = '', geminiKey = '', geminiModel = '';
+export function setGeminiCredential(key: string, model: string) { geminiKey = key; geminiModel = model; }
 export function setBatonAccessKey(value: string) { batonAccessKey = value; }
 
 export class BatonApiError extends Error {
@@ -43,7 +44,7 @@ export type ApiError = BatonApiError;
 // the request settles; nothing is persisted in browser storage.
 const pendingReads = new Map<string, Promise<unknown>>();
 function coalescedRead<T>(kind: string, request: unknown, token: string | undefined, read: () => Promise<T>): Promise<T> {
-  const key = JSON.stringify([kind, request, token || '', batonAccessKey]);
+  const key = JSON.stringify([kind, request, token || '', batonAccessKey, geminiKey, geminiModel]);
   const pending = pendingReads.get(key);
   if (pending) return pending as Promise<T>;
   const result = read(); pendingReads.set(key, result);
@@ -64,10 +65,18 @@ async function apiRequest<T>(
   options: RequestInit = {},
   githubToken?: string
 ): Promise<T> {
-  if (/^\/api\/v1\/(github|analysis|context|integration|workspace)(\/|$)/.test(endpoint) && !githubToken?.trim()) {
+  if (/^\/api\/v1\/(github|analysis|context|integration|workspace)(\/|$)/.test(endpoint) && endpoint !== '/api/v1/workspace/provider/validate' && !githubToken?.trim()) {
     throw new BatonApiError('GitHub token required. Enter your Fine-grained GitHub token in Repository.', 401, undefined, 'github_token_required');
   }
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  try {
+    const base = new URL(BASE_URL);
+    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash || base.pathname !== '/') throw new Error();
+    if (window.location.protocol === 'https:' && base.protocol !== 'https:') throw new Error();
+    if (import.meta.env.PROD && !['localhost', '127.0.0.1'].includes(window.location.hostname) && ['localhost', '127.0.0.1'].includes(base.hostname)) throw new Error();
+  } catch {
+    throw new BatonApiError('Baton service address is misconfigured. Ask the deployment operator to set the backend origin without an API path.', 0, undefined, 'baton_api_configuration');
+  }
   const url = `${BASE_URL}${normalizedEndpoint}`;
 
   const headers: Record<string, string> = {
@@ -77,6 +86,7 @@ async function apiRequest<T>(
 
   if (batonAccessKey) headers['X-Baton-Key'] = batonAccessKey;
   if (githubToken?.trim()) headers['X-GitHub-Token'] = githubToken.trim();
+  if (geminiKey && endpoint.startsWith('/api/v1/') && endpoint !== '/api/v1/workspace/provider/validate') { headers['X-Gemini-Key'] = geminiKey; headers['X-Gemini-Model'] = geminiModel; }
 
   let res: Response;
   const started = performance.now(), usageKey = currentConversationKey();
@@ -87,8 +97,8 @@ async function apiRequest<T>(
     if (endpoint.startsWith('/api/v1/')) recordUsage(endpoint, 0, null, performance.now() - started, usageKey, abandoned);
     if (abandoned) throw error;
     throw new BatonApiError(
-      'Unable to reach Baton backend. Check the backend URL or network connection.',
-      0, undefined, 'network_failure'
+      "Can't reach Baton right now. Check the connection and try again.",
+      0, 'The browser did not expose an HTTP response. Backend availability, browser restrictions or CORS may be responsible.', 'baton_backend_unreachable'
     );
   }
 
@@ -136,7 +146,7 @@ async function apiRequest<T>(
       defaultMsg = 'Baton backend encountered an internal error.';
     }
 
-    const message = redactUserText(bodyDetail || defaultMsg, [githubToken || '', batonAccessKey]);
+    const message = redactUserText(bodyDetail || defaultMsg, [githubToken || '', batonAccessKey, geminiKey, headers['X-Gemini-Key'] || '']);
     const failure = new BatonApiError(message, res.status, message, errorCode);
     failure.rateLimit = rateLimit;
     failure.rateLimitKind = rateLimitKind;
@@ -156,6 +166,11 @@ async function apiRequest<T>(
 }
 
 export const batonApi = {
+  async validateGemini(key: string, model: string) {
+    const result = await apiRequest<{name: string; configured: boolean; model: string; key_accepted: boolean; model_validation: string; generation_validation: string; state: string}>('/api/v1/workspace/provider/validate', { method: 'POST', headers: { 'X-Gemini-Key': key, 'X-Gemini-Model': model } });
+    if (result.name !== 'gemini' || result.key_accepted !== true || result.model !== model || result.model_validation !== 'VERIFIED' || result.state !== 'AI_READY') throw new BatonApiError('Gemini validation response was incomplete.', 502, undefined, 'ai_provider_invalid_response');
+    return result;
+  },
   async checkGitHubAccess(token?: string): Promise<GitHubAccess> {
     const result = await apiRequest<GitHubAccess>('/api/v1/github/access', { method: 'GET' }, token);
     if (typeof result?.authenticated !== 'boolean' || !result.rate_limit || !['request', 'server', 'none'].includes(result.token_source)) {
@@ -187,7 +202,7 @@ export const batonApi = {
     return result;
   },
   async artifact(request: WorkspaceRequest & { artifact_type: ArtifactType; target?: string }, token?: string): Promise<WorkspaceArtifact> {
-    const result = await apiRequest<WorkspaceArtifact>('/api/v1/workspace/artifacts', { method: 'POST', body: JSON.stringify(request) }, token);
+    const result = await coalescedRead('artifact', request, token, () => apiRequest<WorkspaceArtifact>('/api/v1/workspace/artifacts', { method: 'POST', body: JSON.stringify(request) }, token));
     requireIdentity(result.identity, request);
     if (result.artifact_type !== request.artifact_type || typeof result.content !== 'string'
       || !/^[a-f0-9]{64}$/i.test(result.sha256) || !/^[a-zA-Z0-9_.-]+\.md$/.test(result.filename)) {
@@ -257,11 +272,7 @@ export const batonApi = {
   ): Promise<TreeItem[]> {
     const params = new URLSearchParams({ owner, repo, branch });
     if (path) params.set('path', path);
-    const data = await apiRequest<{ items: TreeItem[] }>(
-      `/api/v1/github/tree?${params}`,
-      { method: 'GET' },
-      githubToken
-    );
+    const data = await coalescedRead('tree', params.toString(), githubToken, () => apiRequest<{ items: TreeItem[] }>(`/api/v1/github/tree?${params}`, { method: 'GET' }, githubToken));
     if (!Array.isArray(data.items)) throw new BatonApiError('Baton backend returned an invalid file tree.', 502);
     return data.items;
   },
@@ -274,11 +285,7 @@ export const batonApi = {
     githubToken?: string
   ): Promise<FileContent> {
     const params = new URLSearchParams({ owner, repo, branch, path });
-    return apiRequest<FileContent>(
-      `/api/v1/github/file?${params}`,
-      { method: 'GET' },
-      githubToken
-    );
+    return coalescedRead('file', params.toString(), githubToken, () => apiRequest<FileContent>(`/api/v1/github/file?${params}`, { method: 'GET' }, githubToken));
   },
 
   async analyzeFolder(
@@ -325,14 +332,15 @@ export const batonApi = {
     githubToken?: string,
     options: Partial<WorkspaceRequest> & { max_bytes?: number } = {}
   ): Promise<ContextResult> {
-    const result = await apiRequest<ContextResult>(
+    const payload = { ...options, owner, repo, branch, folder, include_markdown: includeMarkdown };
+    const result = await coalescedRead('context', payload, githubToken, () => apiRequest<ContextResult>(
       '/api/v1/context',
       {
         method: 'POST',
-        body: JSON.stringify({ ...options, owner, repo, branch, folder, include_markdown: includeMarkdown }),
+        body: JSON.stringify(payload),
       },
       githubToken
-    );
+    ));
     if (!result.context || typeof result.markdown !== 'string' || !Array.isArray(result.omitted)
       || !Number.isFinite(result.estimated_tokens)) {
       throw new BatonApiError('Baton returned an invalid context response.', 502, undefined, 'snapshot_invalid');

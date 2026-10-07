@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { getUsage, subscribeUsage } from '@/lib/usage';
 import {
   Activity, GitBranch, Users, BarChart3, FileText, Terminal,
   Radar, GitMerge, RefreshCw, Settings, Menu, X, LogOut, MessageSquare,
@@ -55,6 +56,8 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
   const navigationToggle = useRef<HTMLButtonElement>(null);
   const settingsToggle = useRef<HTMLButtonElement>(null);
   const repoName = state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository';
+  const { last } = useSyncExternalStore(subscribeUsage, getUsage);
+  const unreachable = last?.status === 0 && !last.abandoned;
 
   useEffect(() => {
     if (!clearDemoOpen) return;
@@ -199,7 +202,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
             </>
           )}
           <span className="text-baton-border">|</span>
-          <StatusIndicator status={(state.repo && state.githubToken) || state.isDemoMode ? 'connected' : 'idle'} />
+          <StatusIndicator status={unreachable ? 'attention' : (state.repo && state.githubToken) || state.isDemoMode ? 'connected' : 'idle'} label={state.isDemoMode ? 'DEMO' : unreachable ? 'BATON UNREACHABLE' : state.repo && state.githubToken ? 'REPOSITORY SELECTED' : state.repo ? 'TOKEN REQUIRED' : 'NO REPOSITORY'} />
           {(state.repo || state.isDemoMode) && (
             <>
               <span className="text-baton-border">|</span>
@@ -256,7 +259,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
                 <input type="password" autoComplete="off" value={state.batonAccessKey}
                   onChange={(event) => state.setBatonAccessKey(event.target.value)}
                   className="mt-2 w-full rounded border border-baton-border bg-baton-layer-1 px-2 py-2 text-sm" />
-                <span className="mt-2 block text-[11px] text-baton-text-tertiary">Kept in memory. AI provider credentials are configured on the server.</span>
+                <span className="mt-2 block text-[11px] text-baton-text-tertiary">Optional operator access for legacy tools. Enter your own Gemini key in Repository. Kept in memory.</span>
               </label>
               <button
                 type="button"
@@ -335,7 +338,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
             {(state.repo || state.isDemoMode) && (
               <div className="mt-auto pt-4 border-t border-baton-border">
                 <div className="px-3 mb-2">
-                  <MonoLabel className="text-baton-text-tertiary">CONNECTED REPOSITORY</MonoLabel>
+                  <MonoLabel className="text-baton-text-tertiary">SELECTED REPOSITORY</MonoLabel>
                 </div>
                 <div className="px-3 py-1.5 mb-2">
                   <div className="font-mono text-[11px] text-baton-text-highlight truncate">

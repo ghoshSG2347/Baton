@@ -94,6 +94,8 @@ class GitHubService:
         self.cache_counts[category] += 1
         from app.core.usage import increment
         increment('cache_hits')
+        if category == 'coalesced':
+            increment('coalesced')
 
     async def observed(self, path, *, params=None, fresh=False):
         key = (self.access_scope, path, tuple(sorted((params or {}).items())))
@@ -129,18 +131,23 @@ class GitHubService:
         self.request_counts[f'{method} {category}'] += 1
         from app.core.usage import increment
         increment('github_requests')
+        from app.core.usage import github_operation, github_result
+        github_operation(category)
         archive = kwargs.pop('_archive', False)
         try:
             async with httpx.AsyncClient(base_url="https://api.github.com", timeout=20) as c:
                 r = await self._archive_response(c, path, headers) if archive else await c.request(method,path,headers=headers,**kwargs)
         except httpx.TimeoutException:
+            github_result(0)
             raise BatonError('GitHub did not respond in time. Please retry.', 504, 'github_timeout') from None
         except httpx.HTTPError:
+            github_result(0)
             raise BatonError("Baton could not reach GitHub. Please retry.", 502, "github_network_failure") from None
         if not archive or self.last_response is None or r.status_code >= 400:
             self.last_response = self.response_metadata(r)
         from app.core.usage import observe_quota
         observe_quota(self.last_response or {})
+        github_result(r.status_code)
         logging.getLogger('uvicorn.error.baton.github.metrics').debug(
             'github_request endpoint=%s token_present=%s token_source=%s response=%s',
             category, bool(self.token), self.token_source, self.last_response)
@@ -155,6 +162,7 @@ class GitHubService:
             secondary = 'secondary rate limit' in message or 'abuse detection' in message
             if r.status_code in (403, 429) and (primary or secondary or 'rate limit' in message or r.status_code == 429 or r.headers.get('retry-after')):
                 kind = 'primary' if primary else 'secondary' if secondary or r.headers.get('retry-after') else 'unknown'
+                increment('github_rate_limited')
                 metadata = {**self.last_response, 'rate_limit_kind': kind, 'token_present': bool(self.token),
                             'authorization_present': bool(self.token), 'token_source': self.token_source}
                 if metadata['retry_after'] is None and kind != 'primary':

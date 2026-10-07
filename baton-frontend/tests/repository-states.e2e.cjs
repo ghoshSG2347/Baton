@@ -139,14 +139,14 @@ function inspection(body) {
  await check('failed analysis offers retry, not a normal missing-analysis warning', async () => {
   analysisFailure = { detail: 'Synthetic safe backend failure', code: 'baton_backend_failure' };
   await page.locator('.ai-refresh').click(); await loaded();
-  assert.equal(await page.locator('.ai-grounding').innerText(), 'Analysis failed');
+  assert.equal(await page.locator('.ai-grounding').innerText(), 'Baton encountered a server error');
   assert.equal(await page.locator('.ai-analysis-status').getAttribute('role'), 'alert');
   assert.equal(await page.locator('.ai-refresh').innerText(), 'Retry analysis');
   assert(!(await page.locator('.ai-analysis-status').innerText()).includes('Synthetic'));
   await page.getByRole('button', {name:'New chat',exact:true}).click();
-  assert.equal(await page.locator('.ai-grounding').innerText(), 'Analysis failed', 'New chat must not erase a repository failure');
+  assert.equal(await page.locator('.ai-grounding').innerText(), 'Baton encountered a server error', 'New chat must not erase a repository failure');
  });
- for (const [status, code, title] of [[401,'github_authentication_failure','GitHub token is invalid or expired'],[403,'github_permission_failure','GitHub denied the request'],[404,'github_not_found','Repository or branch not found'],[429,'github_rate_limit','GitHub API limit reached'],[502,'github_network_failure','Could not reach the repository service']]) {
+ for (const [status, code, title] of [[401,'github_authentication_failure','GitHub token is invalid or expired'],[403,'github_permission_failure','GitHub denied the request'],[404,'github_not_found','Repository or branch not found'],[429,'github_rate_limit','GitHub API limit reached'],[502,'github_network_failure','GitHub is temporarily unreachable']]) {
   await start({status,code});
   await check('HTTP ' + status + ' category is safe and chat remains disabled', async () => {
    assert((await page.locator('.ai-analysis-status').innerText()).includes(title));
@@ -186,7 +186,7 @@ function inspection(body) {
   assert(!(await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage))).includes('audit-token-canary'));
  });
  await start('network'); await check('browser network failure is distinguished', async () => {
-  assert((await page.locator('.ai-analysis-status').innerText()).includes('Could not reach the repository service'));
+  assert((await page.locator('.ai-analysis-status').innerText()).includes("Can't reach Baton right now"));
  });
  await start({status:504,code:'baton_backend_failure'}); await check('timeout has a distinct actionable error', async () => { assert((await page.locator('.ai-analysis-status').innerText()).includes('Request timed out')); });
  await start('invalid'); await check('mismatched branch identity cannot be grounded', async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { batonApi } from '@/lib/api/batonApi';
+import { batonApi, BatonApiError } from '@/lib/api/batonApi';
 import { snapshotState } from '@/lib/workspaceStatus';
 import { ErrorStatus } from '@/components/ui/StatusPanel';
 import type { WorkspaceInspection } from '@/types';
@@ -27,7 +27,7 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
         .catch((cause) => { if (active) setError(cause instanceof Error ? cause : new Error('Overview could not be loaded.')); });
     }
     return () => { active = false; };
-  }, [state.repo, state.isDemoMode, state.selectedBranch, state.selectedFolder, state.githubToken, state.batonAccessKey, state.analysisRevision]);
+  }, [state.repo, state.isDemoMode, state.selectedBranch, state.selectedFolder, state.githubToken, state.batonAccessKey, state.geminiKey, state.geminiModel, state.analysisRevision]);
   const status = inspection && state.repo ? snapshotState(inspection, { owner: state.repo.owner, repo: state.repo.repository, branch: state.selectedBranch || 'main', folder: state.selectedFolder, context_type: 'project', constraints: [] }) : 'CHECKING';
   const activities = state.isDemoMode ? DEMO_ACTIVITIES : inspection?.identity.analysis_timestamp ? [{ time: new Date(inspection.identity.analysis_timestamp).toLocaleTimeString(), type: 'info', event: `Snapshot ${inspection.identity.commit.slice(0, 12)} analyzed. ${inspection.completeness.files_omitted} files omitted.` }] : [];
   const hasRepo = state.repo || state.isDemoMode;
@@ -55,9 +55,12 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
     );
   }
 
+  const confirmed = !error && (state.isDemoMode || !!inspection);
+  const backend = state.isDemoMode ? 'DEMO' : error instanceof BatonApiError && error.status === 0 ? 'UNREACHABLE' : inspection || (error instanceof BatonApiError && error.status > 0) ? 'RESPONDED' : 'CHECKING';
   const stats = [
-    { label: 'REPOSITORY', value: state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'baton/demo-project', status: 'connected' as const, icon: GitBranch },
-    { label: 'BRANCH', value: state.selectedBranch || 'main', status: 'connected' as const, icon: GitBranch },
+    { label: 'REPOSITORY', value: state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'baton/demo-project', status: confirmed ? 'connected' as const : null, icon: GitBranch },
+    { label: 'BRANCH', value: state.selectedBranch || 'main', status: confirmed ? 'connected' as const : null, icon: GitBranch },
+    { label: 'BACKEND', value: backend, status: null, icon: Activity },
     { label: 'ANALYSIS', value: state.isDemoMode ? 'DEMO' : error ? 'REQUEST FAILED' : status, status: null, icon: Activity },
     { label: 'FILES', value: state.isDemoMode ? '84 (DEMO)' : inspection?.available ? String(inspection.completeness.files_analyzed) : 'Unknown', status: null, icon: FileCode },
     { label: 'CONTEXT', value: state.isDemoMode ? '3.2K (DEMO)' : inspection?.estimated_tokens !== undefined ? `${inspection.estimated_tokens} EST. TOKENS` : 'Unknown', status: null, icon: Database },
@@ -67,11 +70,11 @@ export function Overview({ state, onConnectRepo }: OverviewProps) {
     <div className="p-6 lg:p-8 max-w-6xl">
       <SectionLabel className="mb-6">MISSION CONTROL</SectionLabel>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Overview</h1>
-      <p className="text-sm text-baton-text-tertiary mb-8">Live understanding of the project.</p>
+      <p className="text-sm text-baton-text-tertiary mb-8">{confirmed ? 'Current repository observations.' : 'Repository identity remembered. Checking current access and analysis separately.'}</p>
 
       {error && <ErrorStatus error={error} operation="inspect" />}
       {/* Status rail */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-baton-border mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-baton-border mb-8">
         {stats.map((stat, i) => {
           const Icon = stat.icon;
           return (

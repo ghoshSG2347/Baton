@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { TeamMember, WorkspaceSection, RepoValidation, WorkspaceRequest } from '@/types';
-import { setBatonAccessKey as configureAccess } from '@/lib/api/batonApi';
+import { setBatonAccessKey as configureAccess, setGeminiCredential as configureGemini } from '@/lib/api/batonApi';
 import { redactUserData } from '@/lib/utils/redaction';
-import { clearProviderQuota } from '@/lib/usage';
+import { clearProviderQuota, beginConversation } from '@/lib/usage';
 
 interface WorkspaceState {
   repoUrl: string;
@@ -13,6 +13,9 @@ interface WorkspaceState {
   isDemoMode: boolean;
   githubToken: string;
   batonAccessKey: string;
+  geminiKey: string;
+  geminiModel: string;
+  geminiReady: boolean;
   activeSection: WorkspaceSection;
   firstRun: boolean;
   firstRunStep: number;
@@ -33,15 +36,15 @@ function loadState(): Partial<WorkspaceState> | null {
 
 function saveState(state: WorkspaceState) {
   try {
-    const { githubToken, batonAccessKey, ...persistable } = state;
+    const { githubToken, batonAccessKey, geminiKey, geminiReady, ...persistable } = state;
     void githubToken;
-    void batonAccessKey;
+    void batonAccessKey; void geminiKey; void geminiReady;
     const remembered = { ...persistable, repo: persistable.repo ? {
       owner: persistable.repo.owner, repository: persistable.repo.repository,
       default_branch: persistable.repo.default_branch, visibility: persistable.repo.visibility,
       accessible: false, current_head: persistable.repo.current_head,
     } : null };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(redactUserData(remembered, [githubToken, batonAccessKey])));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(redactUserData(remembered, [githubToken, batonAccessKey, geminiKey])));
   } catch {
     // ignore
   }
@@ -57,6 +60,13 @@ export function useWorkspaceState() {
   const [members, setMembers] = useState<TeamMember[]>(initial?.members || []);
   const [isDemoMode, setIsDemoMode] = useState(initial?.isDemoMode || false);
   const [githubToken, setGithubTokenState] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
+  const [geminiModel, setGeminiModel] = useState(initial?.geminiModel || '');
+  const [geminiReady, setGeminiReady] = useState(false);
+  const setGeminiCredential = useCallback((key: string, model: string, ready = false) => {
+    configureGemini(key.trim(), model.trim()); setGeminiKey(key.trim()); setGeminiModel(model.trim()); setGeminiReady(ready);
+    beginConversation();
+  }, []);
   const [batonAccessKey, setAccessKeyState] = useState('');
   const setBatonAccessKey = useCallback((value: string) => { configureAccess(value); setAccessKeyState(value); }, []);
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('ai');
@@ -84,12 +94,12 @@ export function useWorkspaceState() {
     members,
     isDemoMode,
     githubToken,
-    batonAccessKey,
+    batonAccessKey, geminiKey, geminiModel, geminiReady,
     activeSection,
     firstRun,
     firstRunStep,
     resetVersion,
-  }), [repoUrl, repo, selectedBranch, selectedFolder, members, isDemoMode, githubToken, batonAccessKey, activeSection, firstRun, firstRunStep, resetVersion]);
+  }), [repoUrl, repo, selectedBranch, selectedFolder, members, isDemoMode, githubToken, batonAccessKey, geminiKey, geminiModel, geminiReady, activeSection, firstRun, firstRunStep, resetVersion]);
 
 
   useEffect(() => {
@@ -112,12 +122,12 @@ export function useWorkspaceState() {
     setMembers([]);
     setIsDemoMode(false);
     setGithubToken('');
-    setBatonAccessKey('');
+    setBatonAccessKey(''); setGeminiCredential('', '');
     setFirstRun(true);
     setFirstRunStep(0);
     setResetVersion((version) => version + 1);
     localStorage.removeItem(STORAGE_KEY);
-  }, [setBatonAccessKey, setGithubToken]);
+  }, [setBatonAccessKey, setGithubToken, setGeminiCredential]);
 
   // Clears all repository-specific state and persisted localStorage while
   // preserving the in-memory GitHub token so the user can immediately
@@ -148,7 +158,7 @@ export function useWorkspaceState() {
     removeMember,
     setIsDemoMode,
     setGithubToken,
-    setBatonAccessKey,
+    setBatonAccessKey, setGeminiCredential,
     setActiveSection,
     setFirstRun,
     setFirstRunStep,

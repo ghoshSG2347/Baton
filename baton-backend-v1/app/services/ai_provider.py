@@ -42,9 +42,43 @@ _CAPACITY = asyncio.Semaphore(4)
 
 
 class GeminiProvider:
+    async def validate(self):
+        """Check key acceptance and the chosen model, without generating content."""
+        from app.core.security import provider_credential, validate_ai_input
+        from app.core.usage import increment
+        credential = provider_credential()
+        validate_ai_input(credential)
+        increment('ai_validation_requests')
+        try:
+            async with httpx.AsyncClient(timeout=min(15, get_settings().ai_timeout_seconds), follow_redirects=False) as client:
+                response = await client.get(f'https://generativelanguage.googleapis.com/v1beta/models/{credential.model}',
+                                            headers={'x-goog-api-key': credential.key})
+        except httpx.TimeoutException:
+            raise BatonError('Gemini validation timed out. Retry when the provider is available.', 504, 'ai_provider_timeout') from None
+        except httpx.HTTPError:
+            raise BatonError('Gemini provider unavailable.', 502, 'ai_provider_network_failure') from None
+        if response.status_code in (400, 401, 403):
+            raise BatonError('Gemini API key was rejected or lacks access. Check your key and provider restrictions.', 401, 'ai_key_invalid')
+        if response.status_code == 404:
+            raise BatonError('Configured Gemini model unavailable. Choose a model available to your key.', 404, 'ai_model_unavailable')
+        if response.status_code == 429:
+            raise BatonError('Gemini validation rate limited. Wait before retrying.', 429, 'ai_provider_rate_limit', metadata={'retry_after': 60})
+        if response.status_code != 200 or len(response.content) > 100_000:
+            raise BatonError('Gemini provider unavailable.', 502, 'ai_provider_failure')
+        try:
+            body = response.json()
+            if body.get('name') != f'models/{credential.model}' or 'generateContent' not in body.get('supportedGenerationMethods', []):
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise BatonError('Configured Gemini model does not report content-generation support.', 502, 'ai_model_unavailable') from None
+        return {'name': 'gemini', 'configured': True, 'model': credential.model,
+                'key_accepted': True, 'model_validation': 'VERIFIED', 'generation_validation': 'UNVERIFIED', 'state': 'AI_READY'}
+
     async def select(self, packet):
         settings = get_settings()
-        if not settings.gemini_api_key.get_secret_value() or not settings.gemini_model:
+        from app.core.security import provider_credential
+        credential = provider_credential()
+        if not credential.key or not credential.model:
             raise BatonError('AI is not configured. Set GEMINI_API_KEY and GEMINI_MODEL in the backend deployment environment.', 503, 'ai_configuration_incomplete')
         payload = {
             'systemInstruction': {'parts': [{'text': SYSTEM}]},
@@ -63,8 +97,8 @@ class GeminiProvider:
                 async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds,
                                              follow_redirects=False) as client:
                     response = await client.post(
-                        f'https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent',
-                        headers={'x-goog-api-key': settings.gemini_api_key.get_secret_value()}, json=payload)
+                        f'https://generativelanguage.googleapis.com/v1beta/models/{credential.model}:generateContent',
+                        headers={'x-goog-api-key': credential.key}, json=payload)
             except httpx.TimeoutException:
                 finish_provider(started)
                 raise BatonError('AI provider timed out. Repository intelligence remains available. Retry the request.', 504, 'ai_provider_timeout') from None
@@ -77,7 +111,9 @@ class GeminiProvider:
             body = {}
         finish_provider(started, body.get('usageMetadata') if isinstance(body, dict) else None)
         if response.status_code in (401, 403):
-            raise BatonError('AI provider authentication failed. Ask the operator to check the backend Gemini credential.', 502, 'ai_provider_authentication_failure')
+            raise BatonError('Gemini authentication failed. Replace and validate your API key in Repository.', 502, 'ai_provider_authentication_failure')
+        if response.status_code == 404:
+            raise BatonError('Configured Gemini model unavailable. Validate another model in Repository.', 404, 'ai_model_unavailable')
         if response.status_code == 429:
             try:
                 retry = max(1, min(3600, int(response.headers.get('retry-after', '60'))))

@@ -156,7 +156,12 @@ class AnalysisService:
         intelligence = pipeline.run(items, contents, metadata, list(omissions))
         intelligence = sanitize_model(intelligence, secret_values(self.github.token))
         self.store.save(intelligence)
+        from app.core.usage import CURRENT_USAGE
+        usage = CURRENT_USAGE.get()
         retained = self.store.load(owner, repo, branch, commit, folder)
         if retained is None or retained.generated != intelligence.generated:
             raise BatonError('Analysis could not be retained within the backend snapshot storage limits.', 503, 'snapshot_not_stored')
+        if usage is not None:
+            usage.files_collected = len(contents)
+            usage.snapshot_created = True
         return intelligence

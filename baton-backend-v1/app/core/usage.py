@@ -9,9 +9,17 @@ import time
 class RequestUsage:
     github_requests: int = 0
     github_downloads: int = 0
+    github_successes: int = 0
+    github_failures: int = 0
+    github_rate_limited: int = 0
+    github_operations: dict = field(default_factory=dict)
+    files_collected: int = 0
+    coalesced: int = 0
+    snapshot_created: bool = False
     cache_hits: int = 0
     snapshot_hits: int = 0
     ai_requests: int = 0
+    ai_validation_requests: int = 0
     input_tokens: int | None = 0
     output_tokens: int | None = 0
     total_tokens: int | None = 0
@@ -34,6 +42,19 @@ def observe_quota(metadata):
     if usage is not None:
         usage.quota = {key: value for key, value in metadata.get('rate_limit', {}).items()
                        if key in ('limit', 'remaining', 'used', 'reset_at') and type(value) is int and 0 <= value <= 2**53 - 1}
+        resource = metadata.get('rate_limit', {}).get('resource')
+        if resource in ('core', 'search', 'graphql', 'integration_manifest'):
+            usage.quota['resource'] = resource
+
+def github_operation(category):
+    usage = CURRENT_USAGE.get()
+    if usage is not None:
+        usage.github_operations[category] = usage.github_operations.get(category, 0) + 1
+
+def github_result(status, limited=False):
+    increment('github_successes' if 200 <= status < 400 else 'github_failures')
+    if limited:
+        increment('github_rate_limited')
 
 
 def start_provider():

@@ -88,11 +88,11 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     : !inspectionMatches || busy === 'inspect' ? 'CONNECTING'
     : inspection ? snapshotState(inspection, request) : 'CONNECTED';
   const ready = lifecycle === 'READY';
-  const chatReady = ready && !!inspection?.provider.configured;
+  const chatReady = ready && ((state.geminiKey || state.geminiModel) ? state.geminiReady : !!inspection?.provider.configured);
   const currentHead = inspectionMatches ? inspection?.identity.current_head || (knownHead.key === identityKey ? knownHead.sha : '') : knownHead.key === identityKey ? knownHead.sha : '';
   const statusMessage = error && ['inspect', 'analysis'].includes(error.operation) ? requestFailure(error.cause, error.operation) : repositoryMessage(lifecycle);
   const actionLabel = analysisAction(lifecycle);
-  const headerLabel = ready ? 'Repository grounded' : lifecycle === 'ANALYZING' ? 'Analyzing repository' : lifecycle === 'STALE' ? 'Repository snapshot stale' : lifecycle === 'ANALYSIS_FAILED' ? 'Analysis failed' : canOperate ? 'Repository connected' : 'No repository connected';
+  const headerLabel = lifecycle === 'NETWORK_ERROR' ? 'Repository remembered · service unavailable' : lifecycle === 'REQUEST_FAILED' ? statusMessage.title : ready ? 'Repository grounded' : lifecycle === 'ANALYZING' ? 'Analyzing repository' : lifecycle === 'STALE' ? 'Repository snapshot stale' : lifecycle === 'ANALYSIS_FAILED' ? 'Analysis failed' : canOperate ? 'Repository connected' : 'No repository connected';
   const acceptInspection = (result: WorkspaceInspection) => {
     setInspection(result); setInspectionScope(scopeKey);
     if (result.identity.current_head) setKnownHead({ key: identityKey, sha: result.identity.current_head });
@@ -113,7 +113,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     return () => { if (epoch.current === current) epoch.current = current + 1; controller.current?.abort(); };
     // Scope values are serialized to avoid treating equivalent object instances as changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeKey, canOperate, state.githubToken, state.batonAccessKey, state.analysisRevision]);
+  }, [scopeKey, canOperate, state.githubToken, state.batonAccessKey, state.geminiKey, state.geminiModel, state.analysisRevision]);
   useEffect(() => {
     if (!canOperate || !state.repo || knownHead.key !== identityKey || !knownHead.sha) return;
     let active = true; setBranches([]); setBranchError(null);
@@ -169,7 +169,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
   };
   const ask = async (question = message) => {
     if (!chatReady || !inspection || busy || retryBlocked || chatLock.current || !question.trim()) return;
-    const safeQuestion = redactUserText(question.trim(), [state.githubToken, state.batonAccessKey]);
+    const safeQuestion = redactUserText(question.trim(), [state.githubToken, state.batonAccessKey, state.geminiKey]);
     if (safeQuestion === '[REDACTED]') { setError({ cause: new Error('Enter a repository question without credentials.'), operation: 'chat' }); return; }
     const current = epoch.current;
     const abort = new AbortController(); controller.current = abort; chatLock.current = abort; setStopNotice('');
@@ -288,11 +288,11 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
         {error && !['inspect', 'analysis'].includes(error.operation) && <ErrorStatus error={error.cause} operation={error.operation}
           primaryAction={message.trim() && <Button disabled={!!busy || retryBlocked || !chatReady} onClick={() => ask(message)}>Retry question</Button>}
           secondaryAction={<Button variant="ghost" onClick={newChat}>Start a fresh chat</Button>} />}
-        {ready && inspection && !inspection.provider.configured && <StatusPanel {...repositoryMessage('CONFIGURATION_INCOMPLETE')} technicalDetails={inspection.provider.missing_configuration?.filter(name => ['GEMINI_API_KEY', 'GEMINI_MODEL', 'BATON_ACCESS_KEY'].includes(name)).join(', ')} />}
+        {ready && inspection && !chatReady && <StatusPanel {...repositoryMessage('CONFIGURATION_INCOMPLETE')} technicalDetails="Enter and validate your Gemini key and model in Repository." />}
         {!ready && canOperate && <p className="ai-composer-explanation">{lifecycle === 'ANALYZING' ? 'Analysis is running. Chat will be available when this branch is ready.' : 'Analyze this branch before asking Baton about the repository.'}</p>}
         {stopNotice && <p role="status" className="ai-composer-explanation">{stopNotice}</p>}
         <form className="ai-composer" onSubmit={(event) => { event.preventDefault(); ask(); }}>
-          <textarea ref={composer} aria-label="Ask about the connected repository" placeholder={chatReady ? 'Ask about this repository…' : ready ? 'AI chat awaits server configuration' : canOperate ? 'Analyze this branch to ask Baton' : 'Connect a repository to ask Baton'} value={message} maxLength={8000} disabled={!chatReady || !!busy} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); ask(); } }} />
+          <textarea ref={composer} aria-label="Ask about the connected repository" placeholder={chatReady ? 'Ask about this repository…' : ready ? 'Enter and validate your Gemini key in Repository' : canOperate ? 'Analyze this branch to ask Baton' : 'Connect a repository to ask Baton'} value={message} maxLength={8000} disabled={!chatReady || !!busy} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); ask(); } }} />
           <div><span><GitBranch size={11} />{state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository connected'}</span>{busy === 'chat' ? <button type="button" aria-label="Stop waiting for the response" onClick={(event) => { event.preventDefault(); controller.current?.abort(); chatLock.current = null; epoch.current++; setMessage(pendingQuestion); setPendingQuestion(''); setBusy(null); setStopNotice('Stopped waiting. Remote work may still finish. A changed conversation will require New Chat before retrying.'); }}><Square size={14} /></button> : <button type="submit" aria-label="Send repository question" disabled={!chatReady || !!busy || retryBlocked || !message.trim()}><ArrowUp size={18} /></button>}</div>
         </form>
         <p className="ai-composer-footnote">Facts come from canonical evidence. Unknowns remain unknown. Shift + Enter for a new line.</p>
