@@ -26,6 +26,14 @@ _BINDING_KEY = secrets.token_bytes(32)
 METRICS = logging.getLogger('baton.workspace.metrics')
 
 
+def provider_state():
+    settings = get_settings()
+    missing = [name for name, present in [('GEMINI_API_KEY', bool(settings.gemini_api_key.get_secret_value())),
+               ('GEMINI_MODEL', bool(settings.gemini_model)), ('BATON_ACCESS_KEY', bool(settings.baton_access_key))] if not present]
+    return {'name': 'gemini', 'configured': not missing, 'model': settings.gemini_model or None,
+            'missing_configuration': missing, 'model_validation': 'UNVERIFIED'}
+
+
 
 class WorkspaceService:
     def __init__(self, contexts=None, provider=None, conversations=None):
@@ -90,16 +98,20 @@ class WorkspaceService:
                           'files_discovered': 0, 'files_analyzed': 0, 'files_omitted': 0,
                           'critical_files_omitted': 0, 'budget_omitted_blocks': 0},
                           'relevance': {'editable_files': [], 'protected_files': [], 'cross_boundary_files': [], 'warnings': []},
-                          'omission_manifest': [], 'project_types': [], 'provider': {'name': 'gemini', 'configured': bool(get_settings().gemini_api_key.get_secret_value() and get_settings().gemini_model and get_settings().baton_access_key)}}, secret_values(token))
+                          'omission_manifest': [], 'project_types': [], 'provider': provider_state()}, secret_values(token))
         METRICS.info('snapshot_hit')
         return scrub({**data['context'], 'markdown': data['markdown'],
                       'available': True,
                       'state': 'STALE' if data['context']['identity']['snapshot_status'] == 'STALE' else 'EMPTY_REPOSITORY' if not data['analysis']['file_tree'] else 'READY',
                       'project_types': data.get('project_types', []),
                       'estimated_tokens': data['estimated_tokens'],
-                      'provider': {'name': 'gemini', 'configured': bool(get_settings().gemini_api_key.get_secret_value() and get_settings().gemini_model and get_settings().baton_access_key)}}, secret_values(token))
+                      'provider': provider_state()}, secret_values(token))
 
     async def chat(self, req, token=None):
+        with self.conversations.turn(req.conversation_id):
+            return await self._chat(req, token)
+
+    async def _chat(self, req, token=None):
         started = time.monotonic()
         # Read project truth with the same Part 2 projection. Role/ownership remain
         # supplied boundaries and ranking signals, not a restriction on read access.
@@ -110,11 +122,15 @@ class WorkspaceService:
             raise BatonError('Enter a repository question without credentials.', 422)
         binding_data = {'identity': context['identity'], 'member': context['member'],
                         'task': context['task'], 'requested_context_type': req.context_type,
-                        'credential': token or get_settings().github_token}
+                        'constraints': req.constraints, 'credential': token}
         # Generated time changes each call; commit/context parameters bind scope.
         binding_data['identity'] = {k: v for k, v in binding_data['identity'].items() if k != 'generated_at'}
         binding = hmac.new(_BINDING_KEY, json.dumps(binding_data, sort_keys=True).encode(), 'sha256').hexdigest()
         conversation = self.conversations.load(req.conversation_id, binding)
+        if req.revision is not None and req.revision != conversation['revision']:
+            raise BatonError('Conversation revision changed. Start a new chat to avoid continuing outdated history.', 409, 'conversation_changed')
+        if len(conversation['turns']) >= 20:
+            raise BatonError('Conversation limit reached. Start a new conversation.', 409, 'conversation_limit')
         packet, records = retrieve(context, question, conversation, get_settings().ai_input_bytes)
         packet['user_overrides'] = [turn['answer']['user_override'] for turn in conversation['turns']
                                     if turn['answer'].get('user_override')]
@@ -125,7 +141,10 @@ class WorkspaceService:
         comparison = None
         override_match = re.search(r'(?:folder\s+|directory\s+)([\w./-]+)\s+(?:is\s+)?actually\s+(.+)', question, re.I)
         user_override = {'target': override_match.group(1), 'value': override_match.group(2), 'source': 'USER_PROVIDED'} if override_match else None
-        secret_request = bool(re.search(r'(show|reveal|print|expose|give).*(secret|api.?key|token|credential|cookie|\.env)', question.lower()))
+        project_override = re.search(r'actually\s+(?:this|the)\s+project\s+(?:uses|is)\s+(.+)', question, re.I)
+        if project_override:
+            user_override = {'target': context['identity']['repository'], 'value': project_override.group(1), 'source': 'USER_PROVIDED'}
+        secret_request = bool(re.search(r'(show|reveal|print|expose|give).*(secret|api.?key|token|credential|cookie|\.env|authorization|bearer)', question.lower()))
         branch_names = re.findall(r'\b(?:branch\s+)([\w./-]+)', question, flags=re.I)
         branch_names += re.findall(r'what does\s+([\w.-]+/[\w./-]+)\s+(?:currently\s+)?contain', question, flags=re.I)
         wrong_branch = any(name != context['identity']['branch'] for name in branch_names)
@@ -137,7 +156,7 @@ class WorkspaceService:
         elif compare_match:
             from app.schemas.workspace import CompareRequest
             base, other = compare_match.groups()
-            comparison = await self.compare(CompareRequest(**{**req.model_dump(exclude={'message', 'conversation_id'}),
+            comparison = await self.compare(CompareRequest(**{**req.model_dump(exclude={'message', 'conversation_id', 'revision'}),
                                                                'branch': base, 'commit': req.commit if base == req.branch else None,
                                                                'continue_snapshot': req.continue_snapshot if base == req.branch else False,
                                                                'compare_branch': other}), token)
@@ -158,7 +177,7 @@ class WorkspaceService:
                     objective = explicit.group(1)
                 if not objective:
                     objective = 'Audit the supplied repository evidence and investigate only documented gaps within authorized ownership.'
-            values = scrub({**req.model_dump(exclude={'message', 'conversation_id'}), 'artifact_type': command,
+            values = scrub({**req.model_dump(exclude={'message', 'conversation_id', 'revision'}), 'artifact_type': command,
                             'task': objective, 'target': target}, secret_values(token))
             artifact = render_artifact(ArtifactRequest(**values), data)
             selection = EvidenceSelection(status='unknown')
@@ -187,21 +206,21 @@ class WorkspaceService:
         try:
             selection = EvidenceSelection.model_validate(selection)
         except ValueError:
-            raise BatonError('AI returned an invalid grounded selection.', 502) from None
+            raise BatonError('AI returned an invalid grounded selection.', 502, 'ai_provider_invalid_response') from None
         ids = list(dict.fromkeys(selection.evidence_ids))
         if any(identifier not in records for identifier in ids):
-            raise BatonError('AI referenced evidence outside the current context. No answer was accepted.', 502)
+            raise BatonError('AI referenced evidence outside the current context. No answer was accepted.', 502, 'ai_provider_invalid_response')
         if selection.status == 'grounded' and not ids:
-            raise BatonError('AI did not provide evidence for its answer. No answer was accepted.', 502)
+            raise BatonError('AI did not provide evidence for its answer. No answer was accepted.', 502, 'ai_provider_invalid_response')
         if selection.status != 'grounded' and (ids or selection.actions):
-            raise BatonError('AI returned an inconsistent evidence status.', 502)
+            raise BatonError('AI returned an inconsistent evidence status.', 502, 'ai_provider_invalid_response')
         actions = []
         for action in selection.actions:
             if (action.evidence_id not in ids or
                     action.target_path not in context['relevance']['editable_files'] or
                     action.target_path not in records[action.evidence_id]['source_paths'] or
                     (action.kind == 'resolve_conflict' and records[action.evidence_id]['section'] != 'Conflicts, Risks and Unknowns')):
-                raise BatonError('AI proposed an action outside supplied ownership or evidence. No action was accepted.', 502)
+                raise BatonError('AI proposed an action outside supplied ownership or evidence. No action was accepted.', 502, 'ai_provider_invalid_response')
             verb = {'inspect': 'Inspect', 'verify': 'Verify the recorded declaration in', 'resolve_conflict': 'Review the recorded conflict involving'}[action.kind]
             actions.append({'kind': action.kind, 'target_path': action.target_path, 'evidence_id': action.evidence_id,
                             'text': f'{verb} {action.target_path}. This is guidance, not an executed change.'})
@@ -227,11 +246,11 @@ class WorkspaceService:
             refs = reasoning.evidence_ids
             if reasoning.category == 'GENERAL_EXPLANATION':
                 if mode != 'general' or refs:
-                    raise BatonError('General explanation was not explicitly requested or was mixed with project evidence.', 502)
+                    raise BatonError('General explanation was not explicitly requested or was mixed with project evidence.', 502, 'ai_provider_invalid_response')
             elif not refs or any(ref not in ids for ref in refs):
-                raise BatonError('AI reasoning did not cite selected repository evidence.', 502)
+                raise BatonError('AI reasoning did not cite selected repository evidence.', 502, 'ai_provider_invalid_response')
             if reasoning.category == 'RECOMMENDATION' and mode != 'recommendation':
-                raise BatonError('Unrequested recommendations were rejected.', 502)
+                raise BatonError('Unrequested recommendations were rejected.', 502, 'ai_provider_invalid_response')
             answer += f'\n\n### {reasoning.category} — not a project fact\n\n{sanitize(reasoning.text, secret_values(token))}\n\nReferences: ' + ', '.join(f'`{ref}`' for ref in refs)
         if mode == 'recommendation':
             answer = '## CURRENT PRODUCT\n\n' + answer.replace('### RECOMMENDATION', '## POSSIBLE RECOMMENDATIONS\n\n### RECOMMENDATION')

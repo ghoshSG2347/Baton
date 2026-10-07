@@ -36,10 +36,10 @@ async def test_five_question_sequence_reuses_snapshot_and_bounds_provider_input(
     workspace = service()
     workspace.provider.select.side_effect = lambda packet: EvidenceSelection(status='grounded', evidence_ids=[next(r['id'] for r in packet['records'] if r['section_number'] not in {16, 18, 19, 20})])
     monkeypatch.setattr(AnalysisService, 'analyze_intelligence', AsyncMock(side_effect=AssertionError('No rescan')))
-    identifier = None
+    identifier = None; revision = None
     for question in ['Explain the project', 'Explain backend', 'What is unfinished?', 'Generate a PRD', 'Create a Codex prompt']:
-        answer = await workspace.chat(request(ChatRequest, message=question, conversation_id=identifier))
-        identifier = answer['conversation_id']
+        answer = await workspace.chat(request(ChatRequest, message=question, conversation_id=identifier, revision=revision))
+        identifier = answer['conversation_id']; revision = answer['revision']
         assert answer['identity']['commit'] == 'commit-1'
     assert workspace.provider.select.await_count == 3  # Artifacts need no extra billable request.
     assert workspace.contexts.snapshots.github.commit.await_count == 5
@@ -140,13 +140,13 @@ async def test_followup_retrieval_uses_previous_fact_ids_and_user_override_is_se
     workspace = service()
     workspace.provider.select.side_effect = choose_api
     first = await workspace.chat(request(ChatRequest, message='Explain the API'))
-    second = await workspace.chat(request(ChatRequest, message='What should the frontend developer do?', conversation_id=first['conversation_id']))
+    second = await workspace.chat(request(ChatRequest, message='What should the frontend developer do?', conversation_id=first['conversation_id'], revision=first['revision']))
     packet = workspace.provider.select.call_args.args[0]
     assert packet['conversation_state'][0]['evidence_ids'] == [first['citations'][0]['id']]
     assert first['answer'] not in json.dumps(packet)
-    override = await workspace.chat(request(ChatRequest, message='The folder shared is actually infrastructure', conversation_id=second['conversation_id']))
+    override = await workspace.chat(request(ChatRequest, message='The folder shared is actually infrastructure', conversation_id=second['conversation_id'], revision=second['revision']))
     assert 'USER_PROVIDED / USER_OVERRIDE' in override['answer']
-    await workspace.chat(request(ChatRequest, message='Explain that classification', conversation_id=override['conversation_id']))
+    await workspace.chat(request(ChatRequest, message='Explain that classification', conversation_id=override['conversation_id'], revision=override['revision']))
     assert workspace.provider.select.call_args.args[0]['user_overrides'][0]['target'] == 'shared'
 
 

@@ -22,6 +22,7 @@ let browser, page;
       if (expiredMode) { await route.fulfill({ status: 409, json: { code: 'conversation_expired', detail: 'Conversation expired. Start a new conversation.' } }); return; }
       if (staleMode && !body.continue_snapshot) { await route.fulfill({ status: 409, json: { detail: 'Repository intelligence snapshot is stale; the requested commit is not the current branch state.' }, headers: { 'Access-Control-Allow-Origin': '*' } }); return; }
       response = body.message.includes('technical design') ? { ...fixture.chat_artifact, revision: 2 } : body.continue_snapshot ? fixture.continued_chat : fixture.chat;
+      response = { ...response, conversation_id: body.conversation_id || fixture.chat.conversation_id, revision: (body.revision || 0) + 1 };
     }
     else if (url.pathname.endsWith('/tree')) response = { items: [] };
     else if (url.pathname.endsWith('/source')) response = { path: body.path, content: 'export function askBook() {}', start_line: 1, end_line: 1, partial: false, identity: { commit: body.commit } };

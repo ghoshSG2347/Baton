@@ -78,6 +78,8 @@ class AnalysisService:
             owner.lower(), repo.lower(), branch, commit, folder, '1.1')
         if cache_matches and cached.snapshot_status in {SnapshotStatus.CURRENT, SnapshotStatus.PARTIAL} and not force_refresh:
             self.github.cache_counts['snapshot'] += 1
+            from app.core.usage import increment
+            increment('snapshot_hits')
             return sanitize_model(cached, secret_values(self.github.token))
         stale = any(x['owner'].lower() == owner.lower() and x['repo'].lower() == repo.lower() and x['branch'] == branch and x['folder'] == folder and x['commit'] != commit for x in self.store.metadata())
         self._collected = True

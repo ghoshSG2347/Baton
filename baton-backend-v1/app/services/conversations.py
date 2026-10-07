@@ -4,6 +4,7 @@ from collections import OrderedDict
 from threading import RLock
 from time import monotonic
 from uuid import uuid4
+from contextlib import contextmanager
 from app.core.exceptions import BatonError
 
 
@@ -12,6 +13,21 @@ class ConversationStore:
         self.entries = OrderedDict()
         self.lock = RLock()
         self.capacity, self.ttl = capacity, ttl
+        self.pending = set()
+
+    @contextmanager
+    def turn(self, identifier):
+        if identifier:
+            with self.lock:
+                if identifier in self.pending:
+                    raise BatonError('A response is already pending in this conversation. Wait or start a new chat.', 409, 'conversation_busy')
+                self.pending.add(identifier)
+        try:
+            yield
+        finally:
+            if identifier:
+                with self.lock:
+                    self.pending.discard(identifier)
 
     def load(self, identifier, binding):
         if not identifier:

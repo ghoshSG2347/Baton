@@ -11,6 +11,7 @@ import type {
 } from '@/types';
 import type { WorkspaceRequest, WorkspaceInspection, ChatAnswer, WorkspaceArtifact, ArtifactType, BranchComparison } from '@/types';
 import { redactUserText } from '@/lib/utils/redaction';
+import { currentConversationKey, recordUsage } from '@/lib/usage';
 
 const RAW_URL = import.meta.env.VITE_BATON_API_URL || 'http://localhost:8000';
 const BASE_URL = RAW_URL.replace(/\/+$/, '');
@@ -40,7 +41,14 @@ export type GitHubAccess = { authenticated: boolean; token_present: boolean; tok
 export type ApiError = BatonApiError;
 // Concurrent mounted views share this read. Keys/credentials exist only until
 // the request settles; nothing is persisted in browser storage.
-const branchReads = new Map<string, Promise<Branch[]>>();
+const pendingReads = new Map<string, Promise<unknown>>();
+function coalescedRead<T>(kind: string, request: unknown, token: string | undefined, read: () => Promise<T>): Promise<T> {
+  const key = JSON.stringify([kind, request, token || '', batonAccessKey]);
+  const pending = pendingReads.get(key);
+  if (pending) return pending as Promise<T>;
+  const result = read(); pendingReads.set(key, result);
+  return result.finally(() => pendingReads.delete(key));
+}
 
 function requireIdentity(identity: WorkspaceInspection['identity'], request: WorkspaceRequest) {
   if (!identity || identity.repository?.toLowerCase() !== `${request.owner}/${request.repo}`.toLowerCase()
@@ -71,14 +79,20 @@ async function apiRequest<T>(
   if (githubToken?.trim()) headers['X-GitHub-Token'] = githubToken.trim();
 
   let res: Response;
+  const started = performance.now(), usageKey = currentConversationKey();
   try {
     res = await fetch(url, { ...options, headers });
-  } catch {
+  } catch (error) {
+    const abandoned = error instanceof DOMException && error.name === 'AbortError';
+    if (endpoint.startsWith('/api/v1/')) recordUsage(endpoint, 0, null, performance.now() - started, usageKey, abandoned);
+    if (abandoned) throw error;
     throw new BatonApiError(
       'Unable to reach Baton backend. Check the backend URL or network connection.',
       0, undefined, 'network_failure'
     );
   }
+
+  if (endpoint.startsWith('/api/v1/')) recordUsage(endpoint, res.status, res.headers.get('X-Baton-Usage'), performance.now() - started, usageKey);
 
   if (!res.ok) {
     let bodyDetail = '';
@@ -126,6 +140,7 @@ async function apiRequest<T>(
     const failure = new BatonApiError(message, res.status, message, errorCode);
     failure.rateLimit = rateLimit;
     failure.rateLimitKind = rateLimitKind;
+    if (errorCode === 'ai_provider_rate_limit') failure.retryAt = Date.now() + (retryAfter ?? 60) * 1000;
     if (errorCode === 'github_rate_limit') {
       failure.retryAt = Math.max(rateLimit?.remaining === 0 ? (rateLimit.reset_at || 0) * 1000 : 0,
         Date.now() + (retryAfter ?? (rateLimit?.remaining === 0 && rateLimit.reset_at ? 0 : 60)) * 1000);
@@ -149,7 +164,7 @@ export const batonApi = {
     return result;
   },
   async inspectWorkspace(request: WorkspaceRequest, token?: string): Promise<WorkspaceInspection> {
-    const result = await apiRequest<WorkspaceInspection>('/api/v1/workspace/inspect', { method: 'POST', body: JSON.stringify(request) }, token);
+    const result = await coalescedRead('inspect', request, token, () => apiRequest<WorkspaceInspection>('/api/v1/workspace/inspect', { method: 'POST', body: JSON.stringify(request) }, token));
     const identity = result?.identity;
     if (!identity || typeof identity.repository !== 'string' || typeof identity.branch !== 'string'
       || typeof identity.project_root !== 'string' || typeof identity.commit !== 'string'
@@ -160,10 +175,12 @@ export const batonApi = {
     }
     return result;
   },
-  async chat(request: WorkspaceRequest & { message: string; conversation_id?: string }, token?: string, signal?: AbortSignal): Promise<ChatAnswer> {
+  async chat(request: WorkspaceRequest & { message: string; conversation_id?: string; revision?: number }, token?: string, signal?: AbortSignal): Promise<ChatAnswer> {
     const result = await apiRequest<ChatAnswer>('/api/v1/workspace/chat', { method: 'POST', body: JSON.stringify(request), signal }, token);
     requireIdentity(result.identity, request);
     if (!result.conversation_id || !Number.isInteger(result.revision) || result.revision < 1
+      || (request.conversation_id && result.conversation_id !== request.conversation_id)
+      || (request.revision !== undefined && result.revision !== request.revision + 1)
       || typeof result.answer !== 'string' || !Array.isArray(result.citations) || !Array.isArray(result.actions)) {
       throw new BatonApiError('Baton returned an invalid chat response.', 502);
     }
@@ -188,7 +205,7 @@ export const batonApi = {
     return result;
   },
   async source(request: WorkspaceRequest & { path: string; start_line?: number }, token?: string): Promise<{ path: string; content: string; start_line: number; end_line: number; partial: boolean; identity: { commit: string } }> {
-    const result = await apiRequest<{ path: string; content: string; start_line: number; end_line: number; partial: boolean; identity: { commit: string } }>('/api/v1/workspace/source', { method: 'POST', body: JSON.stringify(request) }, token);
+    const result = await coalescedRead('source', request, token, () => apiRequest<{ path: string; content: string; start_line: number; end_line: number; partial: boolean; identity: { commit: string } }>('/api/v1/workspace/source', { method: 'POST', body: JSON.stringify(request) }, token));
     if (result.path !== request.path || (request.commit && result.identity?.commit !== request.commit) || typeof result.content !== 'string') {
       throw new BatonApiError('Baton returned a source response outside the selected snapshot.', 502, undefined, 'snapshot_invalid');
     }
@@ -217,10 +234,7 @@ export const batonApi = {
   },
 
   async getBranches(owner: string, repo: string, githubToken?: string): Promise<Branch[]> {
-    const readKey = JSON.stringify([owner, repo, githubToken || '', batonAccessKey]);
-    const pending = branchReads.get(readKey);
-    if (pending) return pending;
-    const read = (async () => {
+    return coalescedRead('branches', { owner, repo }, githubToken, async () => {
     const params = new URLSearchParams({ owner, repo });
     const data = await apiRequest<{ branches: Branch[] }>(
       `/api/v1/github/branches?${params}`,
@@ -231,10 +245,7 @@ export const batonApi = {
       throw new BatonApiError('Baton backend returned an invalid branch list.', 502);
     }
     return data.branches;
-    })();
-    branchReads.set(readKey, read);
-    try { return await read; }
-    finally { branchReads.delete(readKey); }
+    });
   },
 
   async getTree(

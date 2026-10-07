@@ -90,15 +90,20 @@ class GitHubService:
             'used': number('x-ratelimit-used'), 'reset_at': reset,
             'resource': response.headers.get('x-ratelimit-resource') if response.headers.get('x-ratelimit-resource') in ('core', 'search', 'graphql', 'integration_manifest') else None}, 'retry_after': retry}
 
+    def cache_hit(self, category):
+        self.cache_counts[category] += 1
+        from app.core.usage import increment
+        increment('cache_hits')
+
     async def observed(self, path, *, params=None, fresh=False):
         key = (self.access_scope, path, tuple(sorted((params or {}).items())))
         cached = self._observations.get(key)
         if not fresh and cached and cached[0] > time.monotonic():
-            self.cache_counts['observation'] += 1
+            self.cache_hit('observation')
             return deepcopy(cached[1])
         loop_key = (asyncio.get_running_loop(), key)
         if loop_key in self._pending:
-            self.cache_counts['coalesced'] += 1
+            self.cache_hit('coalesced')
             return deepcopy(await asyncio.shield(self._pending[loop_key]))
         async def fetch():
             data = await self.request('GET', path, params=params)
@@ -122,6 +127,8 @@ class GitHubService:
                     else 'commit' if '/commits/' in path else 'branches' if path.endswith('/branches')
                     else 'access' if path in ('/user', '/rate_limit') else 'repository')
         self.request_counts[f'{method} {category}'] += 1
+        from app.core.usage import increment
+        increment('github_requests')
         archive = kwargs.pop('_archive', False)
         try:
             async with httpx.AsyncClient(base_url="https://api.github.com", timeout=20) as c:
@@ -132,6 +139,8 @@ class GitHubService:
             raise BatonError("Baton could not reach GitHub. Please retry.", 502, "github_network_failure") from None
         if not archive or self.last_response is None or r.status_code >= 400:
             self.last_response = self.response_metadata(r)
+        from app.core.usage import observe_quota
+        observe_quota(self.last_response or {})
         logging.getLogger('uvicorn.error.baton.github.metrics').debug(
             'github_request endpoint=%s token_present=%s token_source=%s response=%s',
             category, bool(self.token), self.token_source, self.last_response)
@@ -189,6 +198,8 @@ class GitHubService:
             else:
                 return await self._bounded_archive_response(response, limit)
         self.request_counts['GET archive_download'] += 1
+        from app.core.usage import increment
+        increment('github_downloads')
         async with client.stream('GET', location, headers={'Accept': 'application/octet-stream'}) as response:
             if response.status_code in (301, 302, 303, 307, 308):
                 raise BatonError('GitHub archive returned an unexpected redirect.', 502, 'archive_collection_unavailable')
@@ -326,7 +337,7 @@ class GitHubService:
         key = (self.access_scope, 'access')
         cached = self._observations.get(key)
         if cached and cached[0] > time.monotonic():
-            self.cache_counts['access'] += 1
+            self.cache_hit('access')
             return {**deepcopy(cached[1]), 'token_source': self.token_source}
         loop_key = (asyncio.get_running_loop(), key)
         if loop_key not in self._pending:
@@ -374,7 +385,7 @@ class GitHubService:
         path = path.lstrip('/')
         key = (owner.lower(), repo.lower(), branch, path)
         if key in self._content:
-            self.cache_counts['file'] += 1
+            self.cache_hit('file')
             return deepcopy(self._content[key])
         data=await self.request("GET",f"/repos/{owner}/{repo}/contents/{quote(path, safe='/')}",params={"ref":branch})
         if isinstance(data,list) or data.get("type")!="file": raise BatonError("Requested path is not a file")

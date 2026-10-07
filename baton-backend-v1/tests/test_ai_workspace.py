@@ -117,13 +117,13 @@ async def test_conversation_followups_are_server_bound_and_bounded():
     workspace = service()
     workspace.provider.select.side_effect = choose_api
     first = await workspace.chat(request(ChatRequest, message='What is the API?'), 'user-one')
-    second = await workspace.chat(request(ChatRequest, message='Which source defines it?', conversation_id=first['conversation_id']), 'user-one')
+    second = await workspace.chat(request(ChatRequest, message='Which source defines it?', conversation_id=first['conversation_id'], revision=first['revision']), 'user-one')
     assert second['revision'] == 2
     assert workspace.provider.select.call_args.args[0]['previous_user_questions'] == ['What is the API?']
     with pytest.raises(BatonError, match='authorization changed'):
-        await workspace.chat(request(ChatRequest, message='Reuse someone else\'s chat', conversation_id=first['conversation_id']), 'user-two')
+        await workspace.chat(request(ChatRequest, message='Reuse someone else\'s chat', conversation_id=first['conversation_id'], revision=first['revision']), 'user-two')
     with pytest.raises(BatonError, match='role or authorization changed'):
-        await workspace.chat(request(ChatRequest, message='Change duty', conversation_id=first['conversation_id'], member={'ownership': ['server/']}), 'user-one')
+        await workspace.chat(request(ChatRequest, message='Change duty', conversation_id=first['conversation_id'], revision=first['revision'], member={'ownership': ['server/']}), 'user-one')
 
 
 def test_conversation_eviction_revision_limits_and_expiration():

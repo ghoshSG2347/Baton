@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.context import ContextRequest
 
 
@@ -12,6 +12,13 @@ class WorkspaceRequest(ContextRequest):
 class ChatRequest(WorkspaceRequest):
     message: str = Field(min_length=1, max_length=8000)
     conversation_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
+    revision: int | None = Field(default=None, ge=0, le=20)
+
+    @model_validator(mode='after')
+    def conversation_revision(self):
+        if (self.conversation_id and self.revision is None) or (not self.conversation_id and self.revision not in (None, 0)):
+            raise ValueError('Follow-ups require the returned conversation revision; new chats start at zero.')
+        return self
 
 
 class ArtifactRequest(WorkspaceRequest):

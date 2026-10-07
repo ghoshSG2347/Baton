@@ -27,6 +27,7 @@ const navSections: {
       { id: 'repository', label: 'Repository', icon: GitBranch },
       { id: 'team', label: 'Team & Ownership', icon: Users },
       { id: 'analysis', label: 'Analysis', icon: BarChart3 },
+      { id: 'usage', label: 'Usage Center', icon: Activity },
     ],
   },
   {

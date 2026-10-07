@@ -1,12 +1,14 @@
 """Minimal server-only provider; no tools, URL keys, prompt logging or raw errors."""
 import asyncio
 import json
+import time
 from typing import Protocol
 import httpx
 from pydantic import ValidationError
 from app.core.config import get_settings
 from app.core.exceptions import BatonError
 from app.schemas.workspace import EvidenceSelection
+from app.core.usage import start_provider, finish_provider
 
 
 class AIProvider(Protocol):
@@ -55,6 +57,8 @@ class GeminiProvider:
         if _CAPACITY.locked():
             raise BatonError('AI is busy. Retry shortly.', 429, 'ai_provider_busy')
         async with _CAPACITY:
+            started = time.monotonic()
+            start_provider()
             try:
                 async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds,
                                              follow_redirects=False) as client:
@@ -62,16 +66,31 @@ class GeminiProvider:
                         f'https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent',
                         headers={'x-goog-api-key': settings.gemini_api_key.get_secret_value()}, json=payload)
             except httpx.TimeoutException:
+                finish_provider(started)
                 raise BatonError('AI provider timed out. Repository intelligence remains available. Retry the request.', 504, 'ai_provider_timeout') from None
             except httpx.HTTPError:
+                finish_provider(started)
                 raise BatonError('AI provider could not be reached.', 502, 'ai_provider_network_failure') from None
+        try:
+            body = response.json() if len(response.content) <= 100_000 else {}
+        except ValueError:
+            body = {}
+        finish_provider(started, body.get('usageMetadata') if isinstance(body, dict) else None)
+        if response.status_code in (401, 403):
+            raise BatonError('AI provider authentication failed. Ask the operator to check the backend Gemini credential.', 502, 'ai_provider_authentication_failure')
+        if response.status_code == 429:
+            try:
+                retry = max(1, min(3600, int(response.headers.get('retry-after', '60'))))
+            except ValueError:
+                retry = 60
+            raise BatonError('AI provider quota or rate limit reached. Wait before retrying; repository context remains available.', 429, 'ai_provider_rate_limit', metadata={'retry_after': retry})
         if response.status_code != 200:
             raise BatonError('AI provider rejected the request. Check backend provider configuration or quota.',
                              429 if response.status_code == 429 else 502, 'ai_provider_failure')
         if len(response.content) > 100_000:
             raise BatonError('AI provider response exceeded the allowed size.', 502, 'ai_provider_invalid_response')
         try:
-            candidate = response.json()['candidates'][0]
+            candidate = body['candidates'][0]
             if candidate.get('finishReason') != 'STOP':
                 raise ValueError('Incomplete or blocked output')
             output = ''.join(part.get('text', '') for part in candidate['content']['parts'] if not part.get('thought'))

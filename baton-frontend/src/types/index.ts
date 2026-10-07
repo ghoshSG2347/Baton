@@ -119,6 +119,7 @@ export interface TeamMember {
 export type DataState = 'idle' | 'loading' | 'success' | 'partial' | 'error' | 'stale';
 
 export type WorkspaceSection =
+  | 'usage'
   | 'ai'
   | 'overview'
   | 'repository'
@@ -162,7 +163,7 @@ export interface WorkspaceInspection {
   relevance: { editable_files: string[]; protected_files: string[]; cross_boundary_files: string[]; warnings: string[] };
   sections: { number: number; title: string; records: EvidenceRecord[] }[];
   omission_manifest: { category: string; source_paths: string[]; reason: string; record?: string }[];
-  provider: { name: string; configured: boolean };
+  provider: { name: string; configured: boolean; model?: string | null; missing_configuration?: string[] };
 }
 export interface ChatAnswer {
   conversation_id: string; revision: number; status: 'grounded' | 'unknown' | 'out_of_scope';

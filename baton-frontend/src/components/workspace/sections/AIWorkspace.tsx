@@ -10,6 +10,7 @@ import { redactUserText } from '@/lib/utils/redaction';
 import { ErrorStatus, StatusPanel } from '@/components/ui/StatusPanel';
 import { analysisAction, repositoryMessage, requestFailure, snapshotState } from '@/lib/workspaceStatus';
 import './AIWorkspace.css';
+import { beginConversation } from '@/lib/usage';
 import { useRetryBackoff } from '@/hooks/useRetryBackoff';
 type Turn = { id: number; question: string; result: ChatAnswer };
 const artifactNames: Record<ArtifactType, string> = {
@@ -39,6 +40,9 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
   const [inspection, setInspection] = useState<WorkspaceInspection | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [conversationId, setConversationId] = useState<string>();
+  const [conversationRevision, setConversationRevision] = useState(0);
+  const chatLock = useRef<AbortController | null>(null);
+  const [stopNotice, setStopNotice] = useState('');
   const [pendingQuestion, setPendingQuestion] = useState('');
   const [busy, setBusy] = useState<'inspect' | 'refresh' | 'chat' | 'artifact' | 'compare' | null>(null);
   const [error, setError] = useState<{ cause: unknown; operation: string } | null>(null);
@@ -97,7 +101,8 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
   useEffect(() => { if (previousBranch.current !== request.branch) { setBranchNotice(`Context switched from ${previousBranch.current} → ${request.branch}`); previousBranch.current = request.branch; } }, [request.branch]);
   useEffect(() => {
     const current = ++epoch.current;
-    controller.current?.abort(); setTurns([]); setConversationId(undefined); setPendingQuestion('');
+    beginConversation(); setStopNotice('');
+    controller.current?.abort(); setTurns([]); setConversationId(undefined); setConversationRevision(0); setPendingQuestion('');
     setInspection(null); setArtifacts([]); setActiveArtifact(null); setComparison(null); setError(null);
     if (!canOperate) { setBusy(null); return; }
     setBusy('inspect');
@@ -123,7 +128,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
       if (current !== epoch.current) return;
       acceptInspection(result);
       if (snapshotState(result, request) !== 'READY' || result.identity.commit !== inspection.identity.commit) {
-        setTurns([]); setConversationId(undefined); setArtifacts([]); setActiveArtifact(null); setComparison(null);
+        setTurns([]); setConversationId(undefined); setConversationRevision(0); setArtifacts([]); setActiveArtifact(null); setComparison(null);
       }
     }).catch((cause) => { if (current === epoch.current) { setInspection(null); setError({ cause, operation: 'inspect' }); } });
     // Returning to the workspace revalidates HEAD without discarding a current conversation.
@@ -150,7 +155,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     if (!canOperate || busy || retryBlocked || analysisLock.current === scopeKey) return;
     analysisLock.current = scopeKey;
     const current = ++epoch.current; controller.current?.abort();
-    setBusy('refresh'); setError(null); setInspection(null); setTurns([]); setConversationId(undefined);
+    setBusy('refresh'); setError(null); setInspection(null); setTurns([]); setConversationId(undefined); setConversationRevision(0);
     setArtifacts([]); setActiveArtifact(null); setComparison(null);
     try {
       const forceRefresh = ['READY', 'STALE', 'SNAPSHOT_INVALID'].includes(lifecycle);
@@ -163,24 +168,24 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     finally { if (analysisLock.current === scopeKey) analysisLock.current = ''; if (current === epoch.current) setBusy(null); }
   };
   const ask = async (question = message) => {
-    if (!chatReady || !inspection || busy || !question.trim()) return;
+    if (!chatReady || !inspection || busy || retryBlocked || chatLock.current || !question.trim()) return;
     const safeQuestion = redactUserText(question.trim(), [state.githubToken, state.batonAccessKey]);
     if (safeQuestion === '[REDACTED]') { setError({ cause: new Error('Enter a repository question without credentials.'), operation: 'chat' }); return; }
     const current = epoch.current;
-    const abort = new AbortController(); controller.current = abort;
+    const abort = new AbortController(); controller.current = abort; chatLock.current = abort; setStopNotice('');
     setBusy('chat'); setPendingQuestion(safeQuestion); setMessage(''); setError(null);
     try {
-      const result = await batonApi.chat({ ...request, commit: inspection.identity.commit, message: safeQuestion, conversation_id: conversationId }, state.githubToken || undefined, abort.signal);
+      const result = await batonApi.chat({ ...request, commit: inspection.identity.commit, message: safeQuestion, conversation_id: conversationId, revision: conversationId ? conversationRevision : undefined }, state.githubToken || undefined, abort.signal);
       if (current !== epoch.current || abort.signal.aborted) return;
       setTurns((previous) => [...previous, { id: result.revision, question: safeQuestion, result }]);
-      setConversationId(result.conversation_id);
+      setConversationId(result.conversation_id); setConversationRevision(result.revision);
       if (result.artifact) { const artifact = result.artifact; setArtifacts((previous) => [...previous.filter((a) => a.artifact_type !== artifact.artifact_type), artifact]); setPanelOpen(true); }
       if (result.comparison) { setComparison(result.comparison); setPanelOpen(true); }
     } catch (err) {
       if (current === epoch.current && !abort.signal.aborted) {
         setError({ cause: err, operation: 'chat' }); setMessage(safeQuestion);
-        if (err instanceof BatonApiError && ['conversation_expired', 'conversation_limit'].includes(err.code)) {
-          setConversationId(undefined); setTurns([]);
+        if (err instanceof BatonApiError && ['conversation_expired', 'conversation_limit', 'conversation_changed'].includes(err.code)) {
+          setConversationId(undefined); setConversationRevision(0); setTurns([]);
         } else if (err instanceof BatonApiError && (err.code.startsWith('snapshot_') || (err.status === 409 && err.code === 'baton_backend_failure'))) {
           setInspection(null);
           try {
@@ -190,7 +195,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
         }
       }
     }
-    finally { if (current === epoch.current) { setBusy(null); setPendingQuestion(''); } }
+    finally { if (chatLock.current === abort) chatLock.current = null; if (current === epoch.current) { setBusy(null); setPendingQuestion(''); } }
   };
   const generateArtifact = async () => {
     if (!ready || !inspection || busy) return;
@@ -211,11 +216,17 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     } catch (err) { if (current === epoch.current) setError({ cause: err, operation: 'compare' }); }
     finally { if (current === epoch.current) setBusy(null); }
   };
+  const newChat = () => {
+    controller.current?.abort(); chatLock.current = null; beginConversation(); setStopNotice('');
+    epoch.current++; setMessage(''); setTurns([]); setConversationId(undefined); setConversationRevision(0);
+    setPendingQuestion(''); setError((previous) => previous && ['inspect', 'analysis'].includes(previous.operation) ? previous : null);
+    setBusy(null); setFocusComposer(true);
+  };
   return <section className={`ai-workspace ${panelOpen ? '' : 'ai-panel-collapsed'}`} aria-label="Repository AI workspace">
     <header className="ai-toolbar">
       <div><SectionLabel>Development workspace</SectionLabel><h1>Ask Baton <span className={`ai-grounding ${ready ? '' : 'ai-grounding-muted'}`}>{headerLabel}</span></h1></div>
       <div className="ai-toolbar-actions">
-        <button onClick={() => { controller.current?.abort(); epoch.current++; setMessage(''); setTurns([]); setConversationId(undefined); setPendingQuestion(''); setError((previous) => previous && ['inspect', 'analysis'].includes(previous.operation) ? previous : null); setBusy(null); setFocusComposer(true); }} disabled={busy !== null && busy !== 'chat'}><Plus size={15} /> New chat</button>
+        <button onClick={newChat} disabled={busy !== null && busy !== 'chat'}><Plus size={15} /> New chat</button>
         <button onClick={() => setPanelOpen((value) => !value)} aria-label={panelOpen ? 'Hide evidence panel' : 'Show evidence panel'}>{panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
       </div>
     </header>
@@ -275,13 +286,14 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
       </div>
       <div className="ai-composer-area">
         {error && !['inspect', 'analysis'].includes(error.operation) && <ErrorStatus error={error.cause} operation={error.operation}
-          primaryAction={message.trim() && <Button disabled={!!busy || !chatReady} onClick={() => ask(message)}>Retry question</Button>}
-          secondaryAction={<Button variant="ghost" onClick={() => { setConversationId(undefined); setTurns([]); setError(null); }}>Start a fresh chat</Button>} />}
-        {ready && inspection && !inspection.provider.configured && <StatusPanel {...repositoryMessage('CONFIGURATION_INCOMPLETE')} />}
+          primaryAction={message.trim() && <Button disabled={!!busy || retryBlocked || !chatReady} onClick={() => ask(message)}>Retry question</Button>}
+          secondaryAction={<Button variant="ghost" onClick={newChat}>Start a fresh chat</Button>} />}
+        {ready && inspection && !inspection.provider.configured && <StatusPanel {...repositoryMessage('CONFIGURATION_INCOMPLETE')} technicalDetails={inspection.provider.missing_configuration?.filter(name => ['GEMINI_API_KEY', 'GEMINI_MODEL', 'BATON_ACCESS_KEY'].includes(name)).join(', ')} />}
         {!ready && canOperate && <p className="ai-composer-explanation">{lifecycle === 'ANALYZING' ? 'Analysis is running. Chat will be available when this branch is ready.' : 'Analyze this branch before asking Baton about the repository.'}</p>}
+        {stopNotice && <p role="status" className="ai-composer-explanation">{stopNotice}</p>}
         <form className="ai-composer" onSubmit={(event) => { event.preventDefault(); ask(); }}>
           <textarea ref={composer} aria-label="Ask about the connected repository" placeholder={chatReady ? 'Ask about this repository…' : ready ? 'AI chat awaits server configuration' : canOperate ? 'Analyze this branch to ask Baton' : 'Connect a repository to ask Baton'} value={message} maxLength={8000} disabled={!chatReady || !!busy} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); ask(); } }} />
-          <div><span><GitBranch size={11} />{state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository connected'}</span>{busy === 'chat' ? <button type="button" aria-label="Stop waiting for the response" onClick={() => { controller.current?.abort(); epoch.current++; setMessage(pendingQuestion); setPendingQuestion(''); setBusy(null); setConversationId(undefined); }}><Square size={14} /></button> : <button type="submit" aria-label="Send repository question" disabled={!chatReady || !!busy || !message.trim()}><ArrowUp size={18} /></button>}</div>
+          <div><span><GitBranch size={11} />{state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository connected'}</span>{busy === 'chat' ? <button type="button" aria-label="Stop waiting for the response" onClick={(event) => { event.preventDefault(); controller.current?.abort(); chatLock.current = null; epoch.current++; setMessage(pendingQuestion); setPendingQuestion(''); setBusy(null); setStopNotice('Stopped waiting. Remote work may still finish. A changed conversation will require New Chat before retrying.'); }}><Square size={14} /></button> : <button type="submit" aria-label="Send repository question" disabled={!chatReady || !!busy || retryBlocked || !message.trim()}><ArrowUp size={18} /></button>}</div>
         </form>
         <p className="ai-composer-footnote">Facts come from canonical evidence. Unknowns remain unknown. Shift + Enter for a new line.</p>
       </div>

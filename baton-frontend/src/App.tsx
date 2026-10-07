@@ -12,6 +12,7 @@ import { ContextBuilder } from '@/components/workspace/sections/ContextBuilder';
 import { PromptBuilder } from '@/components/workspace/sections/PromptBuilder';
 import { ConflictRadar } from '@/components/workspace/sections/ConflictRadar';
 import { Integration } from '@/components/workspace/sections/Integration';
+import { UsageCenter } from '@/components/workspace/sections/UsageCenter';
 const AIWorkspace = lazy(() => import('@/components/workspace/sections/AIWorkspace').then((module) => ({ default: module.AIWorkspace })));
 import type { WorkspaceSection } from '@/types';
 
@@ -39,6 +40,7 @@ export default function App() {
 
   const renderSection = (section: WorkspaceSection) => {
     switch (section) {
+      case 'usage': return null;
       case 'ai':
         return null;
       case 'overview':
@@ -86,7 +88,8 @@ export default function App() {
             transition={{ duration: 0.3 }}
           >
             <WorkspaceShell key={state.resetVersion} state={state} onBackToLanding={() => setPage('landing')}>
-              {(state.activeSection === 'repository' || (state.repo && !state.isDemoMode && !state.githubToken)) && <Repository state={state} />}
+              {state.activeSection === 'usage' && <UsageCenter />}
+              {(state.activeSection === 'repository' || (state.repo && !state.isDemoMode && !state.githubToken && state.activeSection !== 'usage')) && <Repository state={state} />}
               {(!state.repo || state.isDemoMode || state.githubToken) && <>
               <div className="h-full" hidden={state.activeSection !== 'ai'}><Suspense fallback={<div role="status" className="h-full grid place-items-center text-baton-text-tertiary text-sm">Loading workspace…</div>}><AIWorkspace key={`${state.repo?.owner}/${state.repo?.repository}`} state={state} /></Suspense></div>
               {renderSection(state.activeSection)}

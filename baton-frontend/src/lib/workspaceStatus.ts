@@ -23,7 +23,7 @@ export function requestFailure(error: unknown, operation = 'request'): StatusMes
   if (code === 'sensitive_source_path') return { state: 'PERMISSION_DENIED', severity: 'info', title: 'Credential file cannot be displayed', explanation: 'Choose a source file that does not contain credentials.' };
   if (code === 'invalid_source_path') return { state: 'REQUEST_FAILED', severity: 'error', title: 'Invalid source path', explanation: 'Choose a file inside the selected repository without traversal segments.' };
   if (code === 'ai_configuration_incomplete') return repositoryMessage('CONFIGURATION_INCOMPLETE');
-  if (code.startsWith('ai_provider_')) return { state: 'REQUEST_FAILED', severity: 'error', title: 'AI provider request failed', explanation: error instanceof Error ? error.message : 'Review backend provider configuration and quota, then retry.' };
+  if (code.startsWith('ai_provider_')) return { state: 'REQUEST_FAILED', severity: 'error', title: ({ ai_provider_authentication_failure: 'Gemini authentication failed', ai_provider_rate_limit: 'Gemini rate limit reached', ai_provider_timeout: 'Gemini response timed out', ai_provider_invalid_response: 'Gemini response was rejected', ai_provider_busy: 'AI capacity is busy' } as Record<string, string>)[code] || 'AI provider request failed', explanation: error instanceof Error ? error.message : 'Review backend provider configuration and quota, then retry.' };
 
   if (code === 'invalid_repository_url' || status === 422) return { state: 'INVALID_REPOSITORY', severity: 'error', title: 'Invalid repository or branch', explanation: 'Check the repository URL, selected branch and request settings.' };
 

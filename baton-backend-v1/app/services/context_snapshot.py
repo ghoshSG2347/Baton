@@ -38,4 +38,6 @@ class ContextSnapshotService:
             raise BatonError(REFRESH_MESSAGE + ' Run the existing repository/folder analysis endpoint explicitly.', 409, 'snapshot_required')
         if actual_key != requested_key or intelligence.snapshot_status == SnapshotStatus.STALE:
             raise BatonError(REFRESH_MESSAGE + ' Snapshot identity or validity does not match the requested state.', 409, 'snapshot_invalid')
+        from app.core.usage import increment
+        increment('snapshot_hits')
         return intelligence

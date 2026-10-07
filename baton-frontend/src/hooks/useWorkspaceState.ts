@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { TeamMember, WorkspaceSection, RepoValidation, WorkspaceRequest } from '@/types';
 import { setBatonAccessKey as configureAccess } from '@/lib/api/batonApi';
 import { redactUserData } from '@/lib/utils/redaction';
+import { clearProviderQuota } from '@/lib/usage';
 
 interface WorkspaceState {
   repoUrl: string;
@@ -64,8 +65,9 @@ export function useWorkspaceState() {
   const [resetVersion, setResetVersion] = useState(0);
   const setGithubToken = useCallback((value: string) => {
     setGithubTokenState(value.trim());
+    if (githubToken !== value.trim()) clearProviderQuota();
     setFileReference(null);
-  }, []);
+  }, [githubToken]);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const markAnalysisComplete = useCallback(() => setAnalysisRevision((revision) => revision + 1), []);
   const [fileReference, setFileReference] = useState<{ request: WorkspaceRequest; path: string } | null>(null);
