@@ -92,7 +92,7 @@ IMPLEMENTED: User Gemini key/model -> Baton X-Gemini-Key/X-Gemini-Model -> reque
 
 POST /api/v1/workspace/provider/validate performs bounded [models.get](https://ai.google.dev/api/models), checks exact selected model plus generateContent support and returns safe key/model metadata state. Input checks reject blank/whitespace/oversized keys and malformed model IDs; they do not prove validity. Invalid key/access, unavailable model, rate limit, network, timeout and provider failure are distinct. No generation occurs during validation. Generation can fail after metadata success: live gemini-2.5-flash-lite metadata passed but generation returned 404; that is not marked working.
 
-VERIFIED locally with actual Google/GitHub: gemini-3.5-flash-lite first/follow-up, strict original evidence/citations, pinned source, artifacts/context, usage and branch/repository invalidation. First reports 2068 input/97 output/2165 total tokens; follow-up 2041/112/2153. Thinking metadata absent -> UNKNOWN. This is one model/account/time observation, not permanent availability/billing certification or production deployment proof.
+VERIFIED locally with actual Google/GitHub: gemini-3.5-flash-lite first/follow-up, strict original evidence/citations, pinned source, artifacts/context, usage and branch/repository invalidation. First reports 2068 input/97 output/2165 total tokens; follow-up 2041/112/2153. Thinking metadata absent -> UNKNOWN. This is one model/account/time observation, not permanent availability/billing certification or broad production reliability certification.
 
 Optional GEMINI_API_KEY/GEMINI_MODEL/BATON_ACCESS_KEY remain backend-only legacy operator configuration. Explicit legacy server-provider chat requires operator authorization. Request keys take precedence and bypass the legacy configuration requirement for the user's own read-only work. Operator key is not an account/tenancy system. See PROVIDER_SETUP.md; never use VITE_GEMINI or expose operator credentials.
 
@@ -156,7 +156,7 @@ Render installs backend requirements and starts uvicorn app.main:app --host 0.0.
 
 VERIFIED connectivity audit before changes: DNS resolves, HTTPS works, /health and /api/health 200 without redirect, /api/version 200, all expected OpenAPI routes present, production-origin OPTIONS 200 including GitHub/Gemini headers. Actual bundle uses https://baton-shl3.onrender.com; a localhost string elsewhere is demo source text, not active API configuration. Browser production connect/analysis/snapshot/New Chat/context/artifact/source/Usage/branch/repository path passes. Vercel revision 4f3e31d; Render revision 9f321e0 at audit. Private Vercel env/Render logs were inaccessible; public runtime behavior was measured.
 
-The reported historical network failure was NOT reproduced; its exact originating DNS/CORS/browser/availability cause remains UNKNOWN. Confirmed contributing product defects were misleading unconditional connection labels and combined error classification. New hardening rollout/user-key production chat must be verified independently after push and recorded in the audit/final report; older production checks do not certify new code.
+The reported historical network failure was NOT reproduced; its exact originating DNS/CORS/browser/availability cause remains UNKNOWN. Confirmed contributing product defects were misleading unconditional connection labels and combined error classification. VERIFIED after push: Vercel and Render both reported f3c96b4df82d913eb7eddf5b5acd16fc3f20c864; health aliases/OpenAPI/preflight returned 200, the user-provider route is present and a real deployed user-key Gemini two-turn journey passed. One preceding generation was rejected with ai_provider_invalid_response (502); no silent retry or fabricated answer. Private rollout logs remain unavailable. Subsequent documentation/test-only delivery can have a newer SHA; this statement certifies the implementation revision above.
 
 ## 13. Tests
 
@@ -164,14 +164,14 @@ VERIFIED: 335 backend tests after hardening, including request-key/model metadat
 
 VERIFIED: frontend typecheck/lint/build and browser fixture scopes recorded in PROJECT_AUDIT.md. Master credential/connectivity checks pass Chrome/Edge; existing five-group Phase 3, workspace, eight product-completion and seven input groups pass, including touch emulation and responsive overflow. All 29 repository-state cases pass after updated backend-error classification. Fixture success is not live Google evidence.
 
-VERIFIED live local: actual browser/frontend/FastAPI/GitHub/Gemini two-turn journey on Hello-World/master/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d, real provider token reports, exact pinned source, artifact hash, context/usage and scope invalidation. Previous public micrograd/private access/archive and nine artifact checks remain historical evidence with their scope, not repeated claims. Actual production baseline non-provider path passes; new latest rollout is separately checked.
+VERIFIED live local: actual browser/frontend/FastAPI/GitHub/Gemini two-turn journey on Hello-World/master/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d, real provider token reports, exact pinned source, artifact hash, context/usage and scope invalidation. Previous public micrograd/private access/archive and nine artifact checks remain historical evidence with their scope, not repeated claims. Actual production implementation f3c96b4df82d913eb7eddf5b5acd16fc3f20c864 also passes the full user-key two-turn path. A preceding actual generation was rejected safely, so this is bounded acceptance evidence, not a guarantee of every provider response.
 
 NOT VERIFIED: exact Fine-grained least-permission token, physical touchpad gestures, all real project-type semantic classifications, all possible prompt injection/secret formats, multi-worker topology or future model availability. No code coverage percentage measured.
 
 ## 14. Known Limitations
 
 - Historical browser connectivity incident root cause unavailable; present production health/CORS/connect flow works.
-- Model metadata availability does not guarantee generation, schema acceptance or quota; one live model pass is not comprehensive semantic certification.
+- Model metadata availability does not guarantee generation, schema acceptance or quota. One production generation returned ai_provider_invalid_response; an explicit independent repeat passed. Strict rejection remains necessary; the precise rejected field was not captured on that first attempt.
 - Snapshots/history/observations are bounded process memory, not durable/shared across workers.
 - Static wrapper/alias/dynamic API extraction is shallow; project labels/inventory overlap/route matching do not prove runtime features/merge/payload compatibility.
 - Branch lists stop at 100; collection/text/context/output budgets can omit important evidence and disclose omissions.
@@ -181,9 +181,9 @@ NOT VERIFIED: exact Fine-grained least-permission token, physical touchpad gestu
 
 ## 15. Remaining Work
 
-P0: Independently confirm latest frontend/backend rollout after push; if the browser incident recurs, capture safe actual URL/status/preflight evidence to establish its cause. No reproducible current service outage remains.
+P0: No reproducible current service outage remains; implementation rollout and full production journey are verified. If the browser incident recurs, capture safe actual URL/status/preflight evidence to establish its cause.
 
-P1: User-owned Fine-grained least-permission/expiry/revocation live certification; physical touchpad hardware check; deployment topology/worker-sharing requirements; consistent inbound schema/body bounds and production runtime/dependency pins/CI.
+P1: Provider-response/grounding robustness without weakening evidence rejection; user-owned Fine-grained least-permission/expiry/revocation live certification; physical touchpad hardware check; deployment topology/worker-sharing requirements; consistent inbound schema/body bounds and production runtime/dependency pins/CI.
 
 P2: Focused wrapper/alias extraction improvements and fuller reasoning relevance validation; durable state only if explicitly required by deployment needs. No database or architecture replacement is authorized merely by this list.
 
@@ -195,8 +195,8 @@ Actual local analysis: 3 GitHub API requests (HEAD, archive API, tree) + 1 archi
 
 Live Google totals across two successful turns: 4109 input, 209 output, 4318 total; thinking UNKNOWN. Separate unavailable-model attempts report no token counts and are not silently treated as zero usage. Provider metadata validation is separately counted.
 
-Production baseline: /health, /api/health, /api/version, OpenAPI and CORS OPTIONS 200; authenticated public connection/analysis/context/artifact/source and latest baseline Usage Center pass. New final implementation deployment/production Gemini evidence is recorded after push, never inferred from this baseline.
+Production baseline: /health, /api/health, /api/version, OpenAPI and CORS OPTIONS 200; authenticated public connection/analysis/context/artifact/source and latest baseline Usage Center pass. VERIFIED implementation rollout f3c96b4df82d913eb7eddf5b5acd16fc3f20c864 and real production Gemini acceptance separately after push. Production analysis: two API requests plus one archive download, one file, snapshot created, 1566 ms backend/2901 ms browser. First/follow-up: zero GitHub requests, one actual generation each, 2068/97/2165 and 2041/108/2149 input/output/total tokens, 1396/1764 ms provider. Successful-turn totals: 4109 input, 205 output, 4314 total; thinking UNKNOWN. Earlier rejected production generation: 2068 input, 114 output, 2182 total, 2171 ms provider, 502 ai_provider_invalid_response. Total provider-reported tokens across these three production generations: 6496. Failed generation is retained, not hidden or treated as zero.
 
 ## 17. Change Log
 
-2026-10-07: Master hardening plus connectivity steering adds normal user Gemini key/model validation and request scope, AI credential-bound history, richer existing usage measurements, strict API-origin validation, distinct backend/GitHub/AI errors, CORS-visible safe unexpected errors, honest Overview/shell/Ask Baton connection observations and expanded shared idempotent read coalescing. Preserves canonical intelligence/snapshots/provider/native interaction/archive architecture. Context/audit/provider setup reconciled with live local Google and production connectivity evidence. Commit/push and latest deployment are checked separately after final review.
+2026-10-07: Master hardening plus connectivity steering adds normal user Gemini key/model validation and request scope, AI credential-bound history, richer existing usage measurements, strict API-origin validation, distinct backend/GitHub/AI errors, CORS-visible safe unexpected errors, honest Overview/shell/Ask Baton connection observations and expanded shared idempotent read coalescing. Preserves canonical intelligence/snapshots/provider/native interaction/archive architecture. Context/audit/provider setup reconciled with live local Google and production connectivity evidence. Implementation f3c96b4df82d913eb7eddf5b5acd16fc3f20c864 committed and pushed normally to main, remote SHA verified; both production markers match and full live user-key journey verified with the failed attempt retained. Final evidence/test diagnostic follow-up is separate.

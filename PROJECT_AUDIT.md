@@ -72,11 +72,11 @@ VERIFIED final scan of 34 changed/new/build files: zero actual-credential matche
 
 ## Deployment boundary
 
-Baseline production connectivity and non-provider user journey are VERIFIED as above. New hardening/user-key production deployment is not inferred from push or those older SHAs. Exact safe Vercel/Render markers and strongest available live deployed journey are measured after normal push, then reported/recorded. Dashboard access is unavailable; no settings/keys/model are fabricated. Production baseline has no complete legacy provider environment; request-key flow removes that requirement once new backend is deployed.
+Baseline production connectivity and non-provider user journey are VERIFIED as above. New hardening/user-key production deployment is not inferred from push or those older SHAs. VERIFIED after normal push: Vercel and Render both report f3c96b4df82d913eb7eddf5b5acd16fc3f20c864. New provider route is present; /health, /api/health and OpenAPI 200 without redirect, canonical-origin CORS and provider-route OPTIONS 200 accepting GitHub/Gemini headers. Initial 25-second urllib health/version probes timed out; subsequent httpx probes returned 200 before and after rollout. This transient observation is not attributed to Render sleep/deployment or the historical outage without evidence. Dashboard access is unavailable; no settings/keys/model are fabricated. Production baseline has no complete legacy provider environment; request-key flow removes that requirement on the deployed implementation.
 
 ## Remaining genuine limitations
 
-Original historical network incident cause UNKNOWN; present health/CORS/baseline journey passes. Latest rollout must be verified after delivery. Fine-grained least-permission live matrix, physical touchpad hardware, multi-worker topology and comprehensive model semantic/security certification remain unverified. Process-memory snapshots/history lose state on restart/eviction; authorization observations last up to 60 seconds. Static extraction/project-type/inventory/route checks are not runtime/merge/payload proof. Stop may leave remote work. Branch pagination, legacy inbound bounds, runtime/dependency pins/CI/tracked generated files remain debt, not authorization for architecture replacement.
+Original historical network incident cause UNKNOWN; present health/CORS/baseline journey passes. Implementation rollout is verified; documentation/test-only follow-up SHA need not equal the measured implementation markers. One real production generation was rejected safely; exact rejected field not captured and comprehensive provider robustness remains unverified. Fine-grained least-permission live matrix, physical touchpad hardware, multi-worker topology and comprehensive model semantic/security certification remain unverified. Process-memory snapshots/history lose state on restart/eviction; authorization observations last up to 60 seconds. Static extraction/project-type/inventory/route checks are not runtime/merge/payload proof. Stop may leave remote work. Branch pagination, legacy inbound bounds, runtime/dependency pins/CI/tracked generated files remain debt, not authorization for architecture replacement.
 
 ## Documentation and delivery
 
@@ -84,31 +84,49 @@ PROJECT_CONTEXT.md rewritten as the latest requested 17-section canonical docume
 
 ## Exact changed-file inventory
 
-- `PROJECT_AUDIT.md` — Canonical status, evidence or safe setup documentation.
-- `PROJECT_CONTEXT.md` — Canonical status, evidence or safe setup documentation.
-- `PROVIDER_SETUP.md` — Canonical status, evidence or safe setup documentation.
-- `baton-backend-v1/.env.example` — Canonical status, evidence or safe setup documentation.
-- `baton-backend-v1/app/api/routes/workspace.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/core/response_safety.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/core/secrets.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/core/security.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/core/usage.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/services/ai_provider.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/services/analysis_service.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/services/github_service.py` — Existing API/security/provider/usage implementation.
-- `baton-backend-v1/app/services/workspace_service.py` — Existing API/security/provider/usage implementation.
-- `baton-frontend/.env.example` — Canonical status, evidence or safe setup documentation.
-- `baton-frontend/src/App.tsx` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/components/workspace/WorkspaceShell.tsx` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/components/workspace/sections/AIWorkspace.tsx` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/components/workspace/sections/Overview.tsx` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/components/workspace/sections/Repository.tsx` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/components/workspace/sections/UsageCenter.tsx` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/hooks/useWorkspaceState.ts` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/lib/api/batonApi.ts` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/lib/usage.ts` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/src/lib/workspaceStatus.ts` — Existing user credentials, connectivity/state or usage interface.
-- `baton-frontend/tests/repository-states.e2e.cjs` — Regression or opt-in live verification.
-- `baton-backend-v1/tests/test_master_hardening.py` — Regression or opt-in live verification.
-- `baton-frontend/tests/master-hardening.e2e.cjs` — Regression or opt-in live verification.
-- `baton-frontend/tests/master-live.e2e.cjs` — Regression or opt-in live verification.
+- `PROJECT_AUDIT.md` — Audit findings, exact changed files, checks and bounded local/production evidence.
+- `PROJECT_CONTEXT.md` — Canonical current behavior in the requested 17 sections, with evidence and limitations.
+- `PROVIDER_SETUP.md` — Normal user-entered credentials and optional legacy operator setup.
+- `baton-backend-v1/.env.example` — Marks server provider/operator values optional for request-key users.
+- `baton-backend-v1/app/api/routes/workspace.py` — Adds user-key provider metadata validation to the existing workspace router.
+- `baton-backend-v1/app/core/response_safety.py` — Request-local AI scope, secret sanitization and safe CORS-visible unexpected errors.
+- `baton-backend-v1/app/core/secrets.py` — Includes active request Gemini key in existing redaction sources.
+- `baton-backend-v1/app/core/security.py` — Bounded request credentials and user-key access alongside explicit legacy operator flow.
+- `baton-backend-v1/app/core/usage.py` — Extends existing measurements with actual result/category/file/validation counts.
+- `baton-backend-v1/app/services/ai_provider.py` — Validates model metadata and uses user credentials in the existing Gemini adapter.
+- `baton-backend-v1/app/services/analysis_service.py` — Reports collected files and successful snapshot creation.
+- `baton-backend-v1/app/services/github_service.py` — Measures actual upstream request categories and results.
+- `baton-backend-v1/app/services/workspace_service.py` — Reports request provider state and binds conversations to AI credential/model.
+- `baton-backend-v1/tests/test_master_hardening.py` — Credential/model validation, isolation, history and safe error-boundary regressions.
+- `baton-frontend/.env.example` — Documents production origin and prohibits public provider credential configuration.
+- `baton-frontend/src/App.tsx` — Supplies existing workspace state to Usage Center.
+- `baton-frontend/src/components/workspace/WorkspaceShell.tsx` — Labels selected/remembered identity and observed backend unreachability honestly.
+- `baton-frontend/src/components/workspace/sections/AIWorkspace.tsx` — User AI readiness, credential-bound UI history and truthful failure headers.
+- `baton-frontend/src/components/workspace/sections/Overview.tsx` — Removes unconditional connection badges and shows observed backend state.
+- `baton-frontend/src/components/workspace/sections/Repository.tsx` — Accessible Gemini key/model validation, truthful checks and duplicate-request locks.
+- `baton-frontend/src/components/workspace/sections/UsageCenter.tsx` — Displays separate provider/consumption/quota and operation measurements.
+- `baton-frontend/src/hooks/useWorkspaceState.ts` — Memory-only Gemini credentials/readiness and conversation invalidation.
+- `baton-frontend/src/lib/api/batonApi.ts` — Validates API origin, forwards request credentials safely and expands pending-read coalescing.
+- `baton-frontend/src/lib/usage.ts` — Extends the one bounded aggregate with safe measurements and last GitHub operation.
+- `baton-frontend/src/lib/workspaceStatus.ts` — Separates backend, GitHub, provider, configuration and snapshot error presentations.
+- `baton-frontend/tests/master-hardening.e2e.cjs` — Browser credential/state/connectivity regressions with explicitly synthetic responses.
+- `baton-frontend/tests/master-live.e2e.cjs` — Opt-in real browser/GitHub/Gemini acceptance and safe failure diagnostics.
+- `baton-frontend/tests/repository-states.e2e.cjs` — Verifies the new distinct backend and GitHub-network classifications.
+
+## Final production acceptance and delivery
+
+VERIFIED implementation f3c96b4df82d913eb7eddf5b5acd16fc3f20c864 on both Vercel and Render, following normal HEAD:main push and remote SHA check. Chrome -> Vercel -> Render -> actual user GitHub credential -> repository preflight -> actual Google model metadata -> explicit Hello-World/master analysis -> New Chat (zero analysis/inspection) -> real first question/follow-up with returned ID/revision -> original citations/pinned source -> artifact hash -> canonical Context Builder -> Usage Center -> actual branch/repository invalidation. Browser persistence contains neither key. No mocks or operator configuration in this flow. Live token is accepted but NOT Fine-grained.
+
+One preceding production first question reached Google, then returned safe 502 ai_provider_invalid_response. Exact rejected field was not captured on that first attempt; no raw upstream output is logged and no automatic generation retry occurs. Test diagnostics now include only Baton's safe returned error detail, redacted against both credentials. One explicitly reported independent repeat passed both turns. This failed attempt remains evidence of provider-response variability, not backend/CORS/GitHub failure or unconditional production readiness.
+
+| Successful production operation | GitHub API | Downloads | AI calls | Measurement |
+|---|---:|---:|---:|---|
+| Analysis | 2 | 1 | 0 | HEAD and archive API; cached tree; one file; created snapshot; 1566 ms backend / 2901 ms browser |
+| First question | 0 | 0 | 1 | cache/snapshot reuse; input 2068, output 97, total 2165; provider 1396 ms |
+| Follow-up | 0 | 0 | 1 | same conversation/revision; input 2041, output 108, total 2149; provider 1764 ms |
+| Source | 1 | 0 | 0 | exact cited commit; 738 ms |
+| Artifact / Context | 0 | 0 | 0 | 297 / 200 ms, existing snapshot |
+
+Successful production turns total 4109 input / 205 output / 4314 total. Failed first attempt separately reports 2068 input / 114 output / 2182 total, 2171 ms provider; all three production generations total 6496 reported tokens. Thinking absent -> UNKNOWN throughout. These individual samples do not estimate billing/account availability/performance guarantees. Analysis request composition can vary with cache observations; numeric counts above are measured, not assumed.
+
+Final documentation and safe live-test diagnostic follow-up introduces no product-code change after the verified implementation. Final Git SHA and remote state are checked independently; do not claim a newer documentation SHA was production-certified by the implementation test.
