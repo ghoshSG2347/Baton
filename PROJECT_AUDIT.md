@@ -33,7 +33,9 @@ UNKNOWN: Physical laptop touchpad two-finger/horizontal scrolling, real mouse ha
 
 ## Deployment and safety
 
-VERIFIED: Preceding token/archive revision 89b3801 is now served by both Vercel and Render. Render /api/version returns that full SHA; no-token repository validation returns 401 github_token_required. Input-fix rollout needs a post-push revision comparison and production interaction check, reported separately. Do not infer deployment from a push.
+VERIFIED after delivery: Input implementation ccbc51aa92a4178e0c2193d2ee9bcaaf797b6a3f was committed and normally pushed to origin/main; ls-remote matched and the checkout was clean. Vercel's revision marker matches that full SHA. Chrome and Edge on the actual deployed site, without mocked APIs, pass native landing/workspace cursors, landing wheel scroll, nine sections, unlocked body, settings Escape, runtime reduced-motion cursor removal and zero page errors. This verifies the frontend input fix, not live Gemini or physical touchpad behavior.
+
+OBSERVED: Render /api/version still reports preceding token/archive revision 89b3801c50a71e30de960b21b65e446aa724c921, and no-token validation returns 401 github_token_required. No backend source changed in the input commit. Full backend rollout to the input SHA remains unverified at this observation. This documentation-only follow-up records the measured deployment; its own final revision is checked separately in delivery reporting.
 
 Changed files: PROJECT_CONTEXT.md, PROJECT_AUDIT.md; baton-frontend/package.json and package-lock.json; src/App.tsx, components/landing/LandingPage.tsx, components/ui/CustomCursor.tsx and SignalField.tsx, components/workspace/WorkspaceShell.tsx, components/workspace/sections/AIWorkspace.tsx and AIWorkspace.css, index.css; removed hooks/useSmoothScroll.ts; added tests/input-reliability.e2e.cjs. No environment files or generated artifacts belong in this commit. Secret-pattern scan of all 14 changed/new files found zero matches; compiled CSS contains no cursor:none. Git diff --check passes. Credentials remain memory-only as before.
 
