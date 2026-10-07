@@ -1,4 +1,43 @@
-# Baton — User Token / GitHub Access Audit
+# Baton — Input and Scroll Reliability Audit
+
+## Current scope and baseline
+
+2026-10-07. Input pass starts at clean 89b3801c50a71e30de960b21b65e446aa724c921 on baton-current; fetched origin/main matches. Repository: https://github.com/ghoshSG2347/Baton. Final identity is the commit containing this report, resolved with git log. Delivery uses HEAD:main without force. Earlier GitHub verification below remains historical evidence with its original scope.
+
+## Actual reproduction and root causes
+
+VERIFIED: Headless Chrome opened https://baton-sigma-six.vercel.app and read its 89b3801 revision marker. Computed body cursor and button cursor were both none. Source index.css globally hid desktop pointers, although CustomCursor only mounts on landing and depends on mousemove/RAF. Workspace lazy CSS previously restored some cursors; it could not guarantee availability before loading, on landing initialization or if animation failed.
+
+OBSERVED: Landing useSmoothScroll ran Lenis continuously and intercepted native wheel input with duration 1.2. It was optional, unnecessary for the product and not hardware-certified for touchpad momentum. Removed the hook and dependency rather than retaining event interception. Native browser scrolling is the baseline; CSS anchor smooth scrolling remains, disabled for reduced motion.
+
+OBSERVED: Landing transition set body overflow:hidden despite a decorative pointer-events:none overlay. Removed that lock entirely and added transition timer cleanup. No modal, settings or drawer currently changes document overflow. Workspace's internal flex containment remains intentional, with main/navigation and bounded nested panes as scroll owners.
+
+## Delivered changes
+
+- index.css: no cursor:none; native pointer/text semantics and visible keyboard outlines; reduced motion disables smooth scrolling.
+- CustomCursor: decoration only, aria-hidden and pointer-events:none, capability-based fine hover pointer/no coarse pointer/no reduced motion; live media changes, passive mouse movement and listener/RAF cleanup. Native pointer remains independent of decoration readiness.
+- SignalField: pointer-events:none; static reduced-motion frame, no reduced-motion RAF/mouse listener; cleanup on reinitialization/unmount.
+- App/LandingPage: MotionConfig reducedMotion=user, reduced-motion entry skips delay, cleaned transition timers, no overflow mutation, decorative background cannot intercept input.
+- WorkspaceShell: main is keyboard-focusable; demo confirmation focus trap/restoration; settings and mobile-navigation Escape restore their toggles. Existing artifact preview trap/restoration preserved.
+- AIWorkspace: reduced-motion chat scrolling uses auto; textarea keeps native text cursor; New Chat returns focus to the available composer.
+
+## Input acceptance and executed checks
+
+VERIFIED locally in actual Chrome and Edge, using API fixtures: seven grouped checks in each browser cover landing/native cursor/wheel/PageDown, long AI response bidirectional scrolling, composer text cursor/Tab outline, nine existing navigation sections/settings Escape/New Chat composer focus/body overflow, runtime reduced motion, emulated mobile touch swipe/tap/navigation Escape, decorative canvas unavailable, and native cursor CSS with JavaScript unavailable. JavaScript-disabled SPA content is not claimed usable. Fixture long answers are not live Gemini results.
+
+VERIFIED: Existing workspace browser suite passed grounded fixture answer, protected role payload, pinned commit/source navigation, artifact preview/download/Escape, comparison, branch isolation, mobile overflow, memory credentials and explicit refresh. Frontend typecheck, lint and production build pass. Initial typecheck caught Array.at outside target library; fixed with ordinary indexing. First mobile synthesizeScrollGesture assertion failed; explicit CDP touch start/move/end now verifies actual browser default touch scrolling. No runtime page errors in the desktop input check.
+
+OBSERVED: No cursor:none or Lenis/useSmoothScroll references remain in application source. Remaining preventDefault calls are form submission, chat Enter and dialog keyboard focus loops, not global wheel/touch handling. Production build contains no cursor:none. No backend source changed, so this input pass does not repeat backend tests; preceding 305-pass result remains below. Existing Browserslist warning and npm's pre-existing dependency advisories remain outside this input fix; no forced dependency upgrade performed.
+
+UNKNOWN: Physical laptop touchpad two-finger/horizontal scrolling, real mouse hardware and inertia cannot be exercised through headless automation. Automated wheel and touch checks establish browser behavior, not hardware certification. Usage Center is absent at the fetched baseline; no nonexistent surface was tested. The separate Phase 3 AI/usage request is not certified by this interaction pass.
+
+## Deployment and safety
+
+VERIFIED: Preceding token/archive revision 89b3801 is now served by both Vercel and Render. Render /api/version returns that full SHA; no-token repository validation returns 401 github_token_required. Input-fix rollout needs a post-push revision comparison and production interaction check, reported separately. Do not infer deployment from a push.
+
+Changed files: PROJECT_CONTEXT.md, PROJECT_AUDIT.md; baton-frontend/package.json and package-lock.json; src/App.tsx, components/landing/LandingPage.tsx, components/ui/CustomCursor.tsx and SignalField.tsx, components/workspace/WorkspaceShell.tsx, components/workspace/sections/AIWorkspace.tsx and AIWorkspace.css, index.css; removed hooks/useSmoothScroll.ts; added tests/input-reliability.e2e.cjs. No environment files or generated artifacts belong in this commit. Secret-pattern scan of all 14 changed/new files found zero matches; compiled CSS contains no cursor:none. Git diff --check passes. Credentials remain memory-only as before.
+
+## Retained preceding token/archive evidence
 
 ## Scope and identity
 

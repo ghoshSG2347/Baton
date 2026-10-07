@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity, GitBranch, Users, BarChart3, FileText, Terminal,
   Radar, GitMerge, RefreshCw, Settings, Menu, X, LogOut, MessageSquare,
@@ -50,22 +50,41 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [demoMenuOpen, setDemoMenuOpen] = useState(false);
   const [clearDemoOpen, setClearDemoOpen] = useState(false);
+  const demoDialog = useRef<HTMLDivElement>(null);
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  const settingsToggle = useRef<HTMLButtonElement>(null);
   const repoName = state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository';
 
   useEffect(() => {
     if (!clearDemoOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const items = () => Array.from(demoDialog.current?.querySelectorAll<HTMLButtonElement>('button') || []);
+    items()[0]?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setClearDemoOpen(false);
+      if (event.key === 'Tab') {
+        const buttons = items();
+        const target = event.shiftKey ? buttons[buttons.length - 1] : buttons[0];
+        if (document.activeElement === (event.shiftKey ? buttons[0] : buttons[buttons.length - 1])) {
+          event.preventDefault(); target?.focus();
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => { window.removeEventListener('keydown', handleKeyDown); if (previous?.isConnected) previous.focus(); };
   }, [clearDemoOpen]);
   useEffect(() => {
     if (!sidebarOpen) return;
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setSidebarOpen(false); };
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { setSidebarOpen(false); navigationToggle.current?.focus(); } };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
   }, [sidebarOpen]);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { setSettingsOpen(false); settingsToggle.current?.focus(); } };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [settingsOpen]);
 
   return (
     <div className="baton-workspace h-dvh min-h-0 bg-baton-near-black text-baton-white flex flex-col">
@@ -74,6 +93,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
         {/* Left: logo + repo info */}
         <div className="flex items-center gap-4">
           <button
+            ref={navigationToggle}
             onClick={() => setSidebarOpen(!sidebarOpen)}
             aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
             aria-expanded={sidebarOpen}
@@ -125,6 +145,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setClearDemoOpen(false)}>
                   <div
                     role="dialog"
+                    ref={demoDialog}
                     aria-modal="true"
                     aria-labelledby="clear-demo-title"
                     className="w-full max-w-sm border border-baton-border bg-baton-near-black rounded-baton p-5"
@@ -218,6 +239,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
           </button>
           <button
             type="button"
+            ref={settingsToggle}
             onClick={() => setSettingsOpen((open) => !open)}
             aria-label="Open workspace settings"
             className="text-baton-text-tertiary hover:text-baton-white transition-colors"
@@ -341,7 +363,7 @@ export function WorkspaceShell({ state, children, onBackToLanding }: WorkspaceSh
         </aside>
 
         {/* Main content */}
-        <main id="workspace-main" className="flex-1 min-w-0 overflow-y-auto bg-baton-near-black">
+        <main id="workspace-main" tabIndex={0} aria-label="Workspace content" className="flex-1 min-w-0 overflow-y-auto bg-baton-near-black">
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}

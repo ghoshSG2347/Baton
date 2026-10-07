@@ -59,6 +59,11 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
   const controller = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
   const preview = useRef<HTMLDivElement | null>(null);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
+  const [focusComposer, setFocusComposer] = useState(false);
+  useEffect(() => {
+    if (focusComposer && !busy) { composer.current?.focus(); setFocusComposer(false); }
+  }, [focusComposer, busy]);
   const member = state.members.find((item) => item.id === memberId);
   const request = useMemo<WorkspaceRequest>(() => ({
     owner: state.repo?.owner || '', repo: state.repo?.repository || '',
@@ -124,7 +129,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     // Returning to the workspace revalidates HEAD without discarding a current conversation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.activeSection]);
-  useEffect(() => { if (turns.length || pendingQuestion) bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [turns, pendingQuestion]);
+  useEffect(() => { if (turns.length || pendingQuestion) bottom.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' }); }, [turns, pendingQuestion]);
   useEffect(() => {
     if (!activeArtifact) return;
     const previousFocus = document.activeElement as HTMLElement | null;
@@ -210,7 +215,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
     <header className="ai-toolbar">
       <div><SectionLabel>Development workspace</SectionLabel><h1>Ask Baton <span className={`ai-grounding ${ready ? '' : 'ai-grounding-muted'}`}>{headerLabel}</span></h1></div>
       <div className="ai-toolbar-actions">
-        <button onClick={() => { controller.current?.abort(); epoch.current++; setMessage(''); setTurns([]); setConversationId(undefined); setPendingQuestion(''); setError((previous) => previous && ['inspect', 'analysis'].includes(previous.operation) ? previous : null); setBusy(null); }} disabled={busy !== null && busy !== 'chat'}><Plus size={15} /> New chat</button>
+        <button onClick={() => { controller.current?.abort(); epoch.current++; setMessage(''); setTurns([]); setConversationId(undefined); setPendingQuestion(''); setError((previous) => previous && ['inspect', 'analysis'].includes(previous.operation) ? previous : null); setBusy(null); setFocusComposer(true); }} disabled={busy !== null && busy !== 'chat'}><Plus size={15} /> New chat</button>
         <button onClick={() => setPanelOpen((value) => !value)} aria-label={panelOpen ? 'Hide evidence panel' : 'Show evidence panel'}>{panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
       </div>
     </header>
@@ -275,7 +280,7 @@ export function AIWorkspace({ state }: { state: WorkspaceStateHook }) {
         {ready && inspection && !inspection.provider.configured && <StatusPanel {...repositoryMessage('CONFIGURATION_INCOMPLETE')} />}
         {!ready && canOperate && <p className="ai-composer-explanation">{lifecycle === 'ANALYZING' ? 'Analysis is running. Chat will be available when this branch is ready.' : 'Analyze this branch before asking Baton about the repository.'}</p>}
         <form className="ai-composer" onSubmit={(event) => { event.preventDefault(); ask(); }}>
-          <textarea aria-label="Ask about the connected repository" placeholder={chatReady ? 'Ask about this repository…' : ready ? 'AI chat awaits server configuration' : canOperate ? 'Analyze this branch to ask Baton' : 'Connect a repository to ask Baton'} value={message} maxLength={8000} disabled={!chatReady || !!busy} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); ask(); } }} />
+          <textarea ref={composer} aria-label="Ask about the connected repository" placeholder={chatReady ? 'Ask about this repository…' : ready ? 'AI chat awaits server configuration' : canOperate ? 'Analyze this branch to ask Baton' : 'Connect a repository to ask Baton'} value={message} maxLength={8000} disabled={!chatReady || !!busy} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); ask(); } }} />
           <div><span><GitBranch size={11} />{state.repo ? `${state.repo.owner}/${state.repo.repository}` : 'No repository connected'}</span>{busy === 'chat' ? <button type="button" aria-label="Stop waiting for the response" onClick={() => { controller.current?.abort(); epoch.current++; setMessage(pendingQuestion); setPendingQuestion(''); setBusy(null); setConversationId(undefined); }}><Square size={14} /></button> : <button type="submit" aria-label="Send repository question" disabled={!chatReady || !!busy || !message.trim()}><ArrowUp size={18} /></button>}</div>
         </form>
         <p className="ai-composer-footnote">Facts come from canonical evidence. Unknowns remain unknown. Shift + Enter for a new line.</p>

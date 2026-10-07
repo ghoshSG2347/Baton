@@ -1,5 +1,5 @@
-import { motion, AnimatePresence } from 'framer-motion';
-import { useState, lazy, Suspense } from 'react';
+import { motion, AnimatePresence, MotionConfig, useReducedMotion } from 'framer-motion';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { LandingPage } from '@/components/landing/LandingPage';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { CustomCursor } from '@/components/ui/CustomCursor';
@@ -21,14 +21,17 @@ export default function App() {
   const [page, setPage] = useState<Page>('landing');
   const [showWorkspaceIntro, setShowWorkspaceIntro] = useState(false);
   const state = useWorkspaceState();
+  const reducedMotion = useReducedMotion();
 
-  const handleEnterWorkspace = () => {
+  const handleEnterWorkspace = useCallback(() => {
+    if (reducedMotion) { setPage('workspace'); return; }
     setShowWorkspaceIntro(true);
-    setTimeout(() => {
-      setPage('workspace');
-      setShowWorkspaceIntro(false);
-    }, 400);
-  };
+  }, [reducedMotion]);
+  useEffect(() => {
+    if (!showWorkspaceIntro) return;
+    const timer = window.setTimeout(() => { setPage('workspace'); setShowWorkspaceIntro(false); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [showWorkspaceIntro]);
 
   const handleConnectRepo = () => {
     state.setActiveSection('repository');
@@ -60,7 +63,7 @@ export default function App() {
   };
 
   return (
-    <>
+    <MotionConfig reducedMotion="user">
       {page === 'landing' && <CustomCursor />}
 
       <AnimatePresence mode="wait">
@@ -127,6 +130,6 @@ export default function App() {
           </div>
         </motion.div>
       )}
-    </>
+    </MotionConfig>
   );
 }

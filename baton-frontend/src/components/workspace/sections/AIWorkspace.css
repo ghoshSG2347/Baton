@@ -1,6 +1,6 @@
 .baton-workspace { background:#0a0a0b; font-family:'Inter',system-ui,sans-serif; }
-.baton-workspace *, .baton-workspace button, .baton-workspace a, .baton-workspace textarea, .baton-workspace select, .baton-workspace input { cursor:auto; }
 .baton-workspace button, .baton-workspace a { cursor:pointer; }
+.baton-workspace input, .baton-workspace textarea { cursor:text; }
 .baton-workspace button:focus-visible,.baton-workspace input:focus-visible,.baton-workspace select:focus-visible,.baton-workspace textarea:focus-visible { outline:2px solid #34d59a; outline-offset:3px; }
 .ai-workspace { --ai-line:#303236; --ai-muted:#94979e; --ai-ink:#ffffff; --ai-accent:#34d59a; position:relative; height:100%; display:grid; grid-template-columns:minmax(0,1fr) 19rem; grid-template-rows:auto auto auto minmax(0,1fr); color:var(--ai-ink); background:#0a0a0b; font-size:13px; }
 .ai-panel-collapsed { grid-template-columns:minmax(0,1fr); }

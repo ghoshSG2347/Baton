@@ -5,10 +5,21 @@ export function CustomCursor() {
   const ringRef = useRef<HTMLDivElement>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
-    if (window.matchMedia('(pointer: coarse)').matches) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const fine = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const touch = window.matchMedia('(any-pointer: coarse)');
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setEnabled(fine.matches && !touch.matches && !reduce.matches);
+    update();
+    [fine, touch, reduce].forEach((query) => query.addEventListener('change', update));
+    return () => [fine, touch, reduce].forEach((query) => query.removeEventListener('change', update));
+  }, []);
+
+  useEffect(() => {
+    setIsVisible(false);
+    if (!enabled || typeof requestAnimationFrame !== 'function') return;
 
     let mouseX = 0;
     let mouseY = 0;
@@ -39,7 +50,7 @@ export function CustomCursor() {
       rafId = requestAnimationFrame(animate);
     };
 
-    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
     document.addEventListener('mouseleave', onMouseLeave);
     rafId = requestAnimationFrame(animate);
 
@@ -48,16 +59,16 @@ export function CustomCursor() {
       document.removeEventListener('mouseleave', onMouseLeave);
       cancelAnimationFrame(rafId);
     };
-  }, []);
+  }, [enabled]);
 
-  if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) {
-    return null;
-  }
+  if (!enabled) return null;
 
   return (
     <>
       <div
         ref={dotRef}
+        aria-hidden="true"
+        data-decorative-cursor="dot"
         className="fixed top-0 left-0 z-[10000] pointer-events-none transition-opacity duration-200"
         style={{
           width: '6px',
@@ -69,6 +80,8 @@ export function CustomCursor() {
       />
       <div
         ref={ringRef}
+        aria-hidden="true"
+        data-decorative-cursor="ring"
         className="fixed top-0 left-0 z-[10000] pointer-events-none transition-all duration-200"
         style={{
           width: '24px',

@@ -2,7 +2,7 @@
 
 ## 1. Document Status
 
-**OBSERVED:** Updated on 2026-10-07 for `https://github.com/ghoshSG2347/Baton`. This task opened at `135e3c3` on `baton-current`, then fast-forwarded the clean checkout to current `origin/main`, `fe4059a`, before implementation. Delivery targets remote `main`. The final implementation commit contains this context and PROJECT_AUDIT.md; resolve its full identity through Git history because a file cannot embed its own commit hash without changing it.
+**OBSERVED:** Updated on 2026-10-07 for `https://github.com/ghoshSG2347/Baton`. The input reliability pass starts at `89b3801c50a71e30de960b21b65e446aa724c921` on clean baton-current, matching fetched origin/main. Delivery targets remote main. Resolve the final implementation identity through Git history because a file cannot embed its own commit hash without changing it.
 
 **VERIFIED:** This pass executes backend, frontend, fixture-browser and actual GitHub checks for required request credentials and bounded archive collection. Public/private real checks used an accepted existing Git credential held only in memory. It is not a Fine-grained PAT: exact Fine-grained selection/permission/expiration/revocation combinations remain fixture-tested, not certified live. No live Gemini question was sent; provider inspection returned configured=false. Deployment identity is checked independently from a push using the new safe revision markers. See PROJECT_AUDIT.md for exact scope and measured costs.
 
@@ -77,7 +77,7 @@ There is no shared runtime code package between Python and TypeScript. Frontend 
 
 ## 9. Frontend Architecture
 
-**OBSERVED:** React 18, TypeScript, Vite 5, Tailwind 3, Framer Motion, Lucide, Lenis, React Markdown. `src/main.tsx` mounts the app; `App.tsx` uses internal page/section state, not a URL router. The AI workspace is lazily imported but remains mounted in a hidden container while other sections are displayed. Other sections mount selectively and lose component-local results when unmounted.
+**OBSERVED:** React 18, TypeScript, Vite 5, Tailwind 3, Framer Motion, Lucide and React Markdown. Lenis and its useSmoothScroll hook were removed: wheel, touch, momentum and nested scrolling belong to the browser. CSS smooth anchor scrolling remains, disabled for reduced motion. `src/main.tsx` mounts the app; `App.tsx` uses internal page/section state, not a URL router. The AI workspace is lazily imported but remains mounted in a hidden container while other sections are displayed. Other sections mount selectively and lose component-local results when unmounted.
 
 | File | Purpose, inputs and outputs | State/dependencies/API behavior | Limitations |
 |---|---|---|---|
@@ -95,7 +95,11 @@ There is no shared runtime code package between Python and TypeScript. Frontend 
 
 `src/lib/api/batonApi.ts` constructs requests, removes trailing API URL slashes, forwards memory headers, parses safe error metadata and coalesces concurrent branch-list reads. `BatonApiError` separates HTTP/code/detail from network failure and retry timing. Inspection/context/chat/artifact/source/comparison receive targeted runtime guards; TypeScript casting alone does not validate JSON. `workspaceStatus.ts`, `StatusPanel.tsx` and `useRetryBackoff.ts` provide lifecycle/error copy and disabled retry countdowns. No automatic HTTP retry is scheduled.
 
-`src/types/index.ts` defines frontend contracts; `lib/demo/index.ts` owns synthetic older-tool data. `lib/utils/redaction.ts` scrubs browser strings/data. Landing components, `CustomCursor`, `SignalField`, shared primitives, `index.css` and `AIWorkspace.css` implement presentation; this audit does not redesign them. `useSmoothScroll.ts` wraps Lenis for scroll behavior.
+`src/types/index.ts` defines frontend contracts; `lib/demo/index.ts` owns synthetic older-tool data. `lib/utils/redaction.ts` scrubs browser strings/data. Landing components, CustomCursor, SignalField, shared primitives and CSS retain the existing visual identity. Native cursors are never hidden. CustomCursor is an aria-hidden, pointer-events:none decoration enabled only with a fine hover pointer, no coarse pointer and no reduced motion; capability changes remove/reinitialize it with listener/RAF cleanup. SignalField draws a static frame for reduced motion and cancels its previous animation/listeners. MotionConfig honors the user's motion preference, reduced-motion transitions skip entry delays, and chat auto-scroll uses auto instead of smooth.
+
+**OBSERVED:** Landing transitions do not lock body overflow and clean up their timers. The workspace uses h-dvh with a scrollable, keyboard-focusable main and navigation; tree/context have bounded scroll panes; AI conversation, evidence and artifact content own native overflow. Workspace interior overflow-hidden contains its flex layout. No application code intercepts wheel/touch events. Artifact preview retains its focus trap/Escape restoration. Demo confirmation focuses/traps its buttons and restores its invoking control; settings and mobile navigation Escape restore their toggles. New Chat focuses the available composer after clearing pending state. These overlays do not alter document overflow. Global focus-visible outlines survive local outline-none rules.
+
+**VERIFIED:** Chrome and Edge input browser fixtures cover native cursor CSS, decorative hit testing, landing wheel/PageDown, bidirectional long AI conversation wheel scrolling, composer text cursor/Tab focus, all nine existing sections, settings Escape/New Chat focus, runtime reduced motion, emulated touch swipe/tap/mobile navigation, decorative canvas unavailable and CSS with JavaScript unavailable. Existing workspace browser tests cover artifact open/close/Escape, source navigation, mobile overflow and state transitions. Physical touchpad two-finger/horizontal gestures and hardware inertia remain manual verification, not certified by automation.
 
 ## 10. Backend Architecture
 
@@ -311,7 +315,7 @@ Canonical dataclasses include EvidenceSource, DetectedLanguage/Technology, Docum
 
 **OBSERVED:** Frontend Vercel config rewrites paths to index.html. Backend Render config installs requirements and starts `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health `/api/health`, with secret placeholders for Gemini key/model/operator key and canonical CORS origins. Monorepo deployments require appropriate root directories (`baton-frontend`, `baton-backend-v1`); YAML does not explicitly set rootDir. Python/Node versions are not pinned in tracked config. No Docker or GitHub Actions workflow is tracked.
 
-**VERIFIED before delivery:** Vercel HTML and Render health returned 200. Existing production no-token validation still returned 429/token_source=none; accepted request-token private validation returned 200 with canonical Vercel CORS, but without the new authentication fields. Thus old production behavior was observed; it did not prove this change deployed. This pass adds `/api/version` using only a validated RENDER_GIT_COMMIT and a frontend `baton-revision` meta marker using VERCEL_GIT_COMMIT_SHA or Git HEAD. After pushing, compare those markers with the delivered SHA; unknown/missing markers do not prove deployment. Delivery/rollout results are recorded separately from implementation test results.
+**VERIFIED:** The preceding token/archive delivery 89b3801c50a71e30de960b21b65e446aa724c921 reached both Vercel's baton-revision meta marker and Render's /api/version. Render no-token validation returns 401 github_token_required. On that deployed frontend Chrome reproduced body and button cursor:none before the input fix. Input-fix deployment requires its own post-push revision and browser check; a successful push does not prove rollout.
 
 ## 26. Testing
 
@@ -376,7 +380,7 @@ Conflict click → branch trees → exact-path overlap → display. Integration 
 
 ## 31. Known Problems
 
-**VERIFIED/OBSERVED:** No request token means blocked user workflow. Pre-delivery production still served old anonymous behavior; rollout requires separate SHA verification. Live Fine-grained least-permission and Gemini configuration/quality remain unverified; static API wrappers/absolute aliases not fully recognized; first-page-only branches; global process-local state lost across restarts/workers. Conflict Radar failed-read suppression was corrected in this audit.
+**VERIFIED/OBSERVED:** No request token means blocked user workflow. The preceding token/archive revision is verified on both production services. Physical touchpad behavior remains unverified. Live Fine-grained least-permission and Gemini configuration/quality remain unverified; static API wrappers/absolute aliases not fully recognized; first-page-only branches; global process-local state lost across restarts/workers. Conflict Radar failed-read suppression was corrected in the earlier audit.
 
 ## 32. Incomplete Features
 

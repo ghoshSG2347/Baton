@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useReducedMotion } from 'framer-motion';
 
 interface SignalFieldProps {
   density?: number;
@@ -20,6 +21,7 @@ export function SignalField({ density = 60, className = '', interactive = true }
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouseRef = useRef({ x: -1000, y: -1000 });
   const rafRef = useRef(0);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -96,7 +98,7 @@ export function SignalField({ density = 60, className = '', interactive = true }
       }
 
       time++;
-      rafRef.current = requestAnimationFrame(draw);
+      if (!reducedMotion) rafRef.current = requestAnimationFrame(draw);
     };
 
     const onMouseMove = (e: MouseEvent) => {
@@ -110,23 +112,25 @@ export function SignalField({ density = 60, className = '', interactive = true }
 
     resize();
     draw();
-    window.addEventListener('resize', resize);
-    if (interactive) {
-      window.addEventListener('mousemove', onMouseMove);
+    const onResize = () => { resize(); if (reducedMotion) draw(); };
+    window.addEventListener('resize', onResize);
+    if (interactive && !reducedMotion && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      window.addEventListener('mousemove', onMouseMove, { passive: true });
       document.addEventListener('mouseleave', onMouseLeave);
     }
 
     return () => {
       cancelAnimationFrame(rafRef.current);
-      window.removeEventListener('resize', resize);
+      window.removeEventListener('resize', onResize);
       window.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseleave', onMouseLeave);
     };
-  }, [density, interactive]);
+  }, [density, interactive, reducedMotion]);
 
   return (
     <canvas
       ref={canvasRef}
+      aria-hidden="true"
       className={`absolute inset-0 w-full h-full ${className}`}
       style={{ pointerEvents: 'none' }}
     />

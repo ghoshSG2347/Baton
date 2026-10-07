@@ -45,15 +45,10 @@ body {
   background: #4a4d52;
 }
 
-/* Hide default cursor on desktop for custom cursor */
-@media (pointer: fine) {
-  body {
-    cursor: none;
-  }
-  a, button, input, textarea, select, [role="button"] {
-    cursor: none;
-  }
-}
+/* Native input works before JavaScript and independently of decorative effects. */
+button, a, [role="button"], summary { cursor: pointer; }
+input, textarea { cursor: text; }
+:focus-visible { outline: 2px solid var(--baton-accent) !important; outline-offset: 3px; }
 
 /* Geist Mono fallback - use system mono if not loaded */
 .font-mono {
@@ -97,6 +92,7 @@ body {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+  html, * { scroll-behavior: auto !important; }
   *,
   *::before,
   *::after {
@@ -104,23 +100,7 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  body {
-    cursor: auto;
-  }
-  a, button, input, textarea, select, [role="button"] {
-    cursor: auto;
-  }
   .scanline-overlay {
     display: none;
-  }
-}
-
-/* Touch devices - restore cursor */
-@media (pointer: coarse) {
-  body {
-    cursor: auto;
-  }
-  a, button, input, textarea, select, [role="button"] {
-    cursor: auto;
   }
 }

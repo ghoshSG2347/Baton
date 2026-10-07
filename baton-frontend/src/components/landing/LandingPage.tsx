@@ -1,7 +1,6 @@
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion, useScroll, useTransform, useReducedMotion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { SignalField } from '@/components/ui/SignalField';
-import { useSmoothScroll } from '@/hooks/useSmoothScroll';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { HeroSection } from '@/components/landing/HeroSection';
 import { ProblemSection } from '@/components/landing/ProblemSection';
@@ -20,31 +19,26 @@ interface LandingPageProps {
 }
 
 export function LandingPage({ onEnterWorkspace }: LandingPageProps) {
-  useSmoothScroll();
+  const reducedMotion = useReducedMotion();
   const { scrollYProgress } = useScroll();
   const heroOpacity = useTransform(scrollYProgress, [0, 0.05], [1, 0]);
   const [showTransition, setShowTransition] = useState(false);
 
   const handleEnterWorkspace = () => {
+    if (reducedMotion) { onEnterWorkspace(); return; }
     setShowTransition(true);
-    setTimeout(() => {
-      onEnterWorkspace();
-    }, 400);
   };
 
   useEffect(() => {
-    if (showTransition) {
-      document.body.style.overflow = 'hidden';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [showTransition]);
+    if (!showTransition) return;
+    const timer = window.setTimeout(onEnterWorkspace, 400);
+    return () => window.clearTimeout(timer);
+  }, [showTransition, onEnterWorkspace]);
 
   return (
     <div className="relative min-h-screen bg-baton-black text-baton-white overflow-x-hidden">
       {/* Background signal field - fixed for entire page */}
-      <div className="fixed inset-0 z-0 opacity-40">
+      <div className="fixed inset-0 z-0 opacity-40 pointer-events-none" aria-hidden="true">
         <SignalField density={50} interactive={true} />
       </div>
 
@@ -58,7 +52,7 @@ export function LandingPage({ onEnterWorkspace }: LandingPageProps) {
       <div className="relative z-10">
         <LandingHeader onEnterWorkspace={handleEnterWorkspace} />
 
-        <motion.div style={{ opacity: heroOpacity }}>
+        <motion.div style={{ opacity: reducedMotion ? 1 : heroOpacity }}>
           <HeroSection onEnterWorkspace={handleEnterWorkspace} />
         </motion.div>
 
